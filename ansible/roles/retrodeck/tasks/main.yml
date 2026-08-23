@@ -43,8 +43,9 @@
 # --- the irreplaceable, hand-made state lives on the tank (live), the rest
 # local. Gated on the home being INITIALISED (the ES-DE dir the first-run
 # wizard creates): a pre-wizard converge does nothing, the post-wizard one
-# symlinks. A fresh home's state folders are empty (or a regenerable
-# template) - force-replaced with a symlink; the tank holds the truth after.
+# links. Idempotent + handles a non-empty fresh folder (a gamelist template):
+# only if the home subfolder is not already a symlink, preserve its content
+# onto the tank, remove it, then link. The tank holds the truth after.
 - name: RetroDECK's home is initialised (the wizard has run)?
   ansible.builtin.stat:
     path: "{{ arcade_retrodeck_home }}/ES-DE"
@@ -59,40 +60,24 @@
         state: directory
       loop: "{{ arcade_retrodeck_state_dirs + ['gamelists'] }}"
 
-    - name: Preserve any fresh content into the tank before the symlink (one-time)
-      ansible.builtin.command:
+    - name: The precious folders live on the tank, symlinked into the home (live)
+      ansible.builtin.shell:
         cmd: >-
-          rsync -a --ignore-existing
-          {{ arcade_retrodeck_home }}/{{ item }}/ {{ arcade_retrodeck_state }}/{{ item }}/
-      loop: "{{ arcade_retrodeck_state_dirs }}"
-      changed_when: false
-      failed_when: false
-      when: arcade_retrodeck_esde.stat.exists
-
-    - name: saves / states / screenshots in the home -> the tank (symlinks)
-      ansible.builtin.file:
-        src: "{{ arcade_retrodeck_state }}/{{ item }}"
-        dest: "{{ arcade_retrodeck_home }}/{{ item }}"
-        state: link
-        force: true
-        follow: false
-      loop: "{{ arcade_retrodeck_state_dirs }}"
-
-    - name: The ES-DE gamelists content preserved, then linked to the tank (the catalogue)
-      ansible.builtin.command:
-        cmd: >-
-          rsync -a --ignore-existing
-          {{ arcade_retrodeck_home }}/{{ arcade_retrodeck_gamelists }}/ {{ arcade_retrodeck_state }}/gamelists/
-      changed_when: false
-      failed_when: false
-
-    - name: ES-DE gamelists -> the tank
-      ansible.builtin.file:
-        src: "{{ arcade_retrodeck_state }}/gamelists"
-        dest: "{{ arcade_retrodeck_home }}/{{ arcade_retrodeck_gamelists }}"
-        state: link
-        force: true
-        follow: false
+          h={{ arcade_retrodeck_home | quote }}/{{ item.home }};
+          t={{ arcade_retrodeck_state | quote }}/{{ item.tank }};
+          if [ -L "$h" ]; then exit 0; fi;
+          if [ -d "$h" ]; then rsync -a --ignore-existing "$h"/ "$t"/ && rm -rf "$h"; fi;
+          mkdir -p "$(dirname "$h")"; ln -sfn "$t" "$h"; echo LINKED
+      register: arcade_retrodeck_linked
+      changed_when: "'LINKED' in arcade_retrodeck_linked.stdout"
+      loop: >-
+        {%- set out = [] -%}
+        {%- for d in arcade_retrodeck_state_dirs -%}
+        {%-   set _ = out.append({'home': d, 'tank': d}) -%}
+        {%- endfor -%}
+        {%- set _ = out.append({'home': arcade_retrodeck_gamelists, 'tank': 'gamelists'}) -%}
+        {{ out }}
+      loop_control: { label: "{{ item.home }}" }
 
 - name: <home>/roms -> the library's local copy
   ansible.builtin.file:
