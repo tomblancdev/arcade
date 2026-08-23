@@ -1,0 +1,20 @@
+---
+# screen — the GPU-owner VM (Bazzite: Fedora Atomic, rpm-ostree) after its
+# install runbook. Everything a lab sets; nothing here is a secret.
+arcade_screen_user: deck               # the VM's interactive user (uid 1000 on Bazzite)
+arcade_screen_address: ""              # static IPv4 (cidr), e.g. 10.10.50.21/24 — set by NetworkManager
+arcade_screen_gateway: ""
+arcade_screen_dns: []                  # resolvers (the lab's pair)
+arcade_screen_hostname: console
+# mounts: the data bricks, by mode. `live` = used in place (saves, config);
+# `sync-at-wake` = mounted then rsync'd to arcade_screen_cache at every boot
+# (the VM plays from the copy and survives the server being down)
+arcade_screen_mounts: []
+#  - { src: "10.10.10.12:/tank/games/console", path: /srv/screen/retrodeck, mode: live,         fstype: nfs4, options: "soft,timeo=30,retrans=3,_netdev" }
+#  - { src: "10.10.10.12:/tank/games/roms",    path: /srv/roms,             mode: sync-at-wake, fstype: nfs4, options: "ro,soft,_netdev" }
+arcade_screen_cache: /srv/roms-cache    # where sync-at-wake mounts are copied
+# idle → the VM stops itself (no Sunshine session, no couch input for N min)
+arcade_screen_idle_minutes: 20
+# the log/metrics shipper (alloy as a container on an immutable OS)
+arcade_screen_loki_url: ""             # e.g. http://10.10.20.35:3100
+arcade_screen_prometheus_url: ""       # e.g. http://10.10.20.35:9090

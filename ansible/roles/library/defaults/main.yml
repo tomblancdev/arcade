@@ -1,0 +1,7 @@
+---
+# library — the ROM store on the VM: the NFS mount is the source, the local
+# NVMe copy is what plays (rsync at every wake; the server may be down).
+arcade_library_source: /srv/roms               # the `sync-at-wake` mount
+arcade_library_cache: /srv/roms-cache
+arcade_library_sync_at_wake: true
+arcade_library_rsync_options: "-a --delete --partial"

@@ -1,0 +1,12 @@
+---
+galaxy_info:
+  author: Tom Blanc
+  description: "the emulation front: RetroDECK Flatpak on the live mount, ROMs from the library"
+  license: MIT
+  min_ansible_version: "2.16"
+  platforms:
+    - name: Fedora
+      versions: [all]
+    - name: Debian
+      versions: [all]
+dependencies: []

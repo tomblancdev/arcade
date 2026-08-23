@@ -1,0 +1,18 @@
+---
+# doorman — the app of this repo, run as a podman Quadlet (the La Loge
+# pattern). The tag is the pin: bumping it IS the update.
+arcade_doorman_image: "ghcr.io/tomblancdev/arcade:0.1.0"
+arcade_doorman_port: 8080
+arcade_doorman_conf_dir: /etc/arcade
+arcade_doorman_data_dir: /srv/arcade/data
+arcade_doorman_uid: 65532               # the image runs as this user (scratch, no passwd)
+arcade_doorman_base_url: ""             # https://play.example.net
+arcade_doorman_tz: Europe/Paris
+# identity: the proxy's forward_auth headers, trusted from the proxy only
+arcade_doorman_trusted_proxies: []
+arcade_doorman_admin_groups: [admins]
+arcade_doorman_player_groups: [players]
+# the one ssh key: a forced command on the hypervisor (wake | start <vmid> | stop <vmid> | status)
+arcade_doorman_door_host: ""            # e.g. 10.10.10.11
+arcade_doorman_door_user: arcade
+arcade_doorman_door_host_key: ""        # pinned

@@ -1,0 +1,29 @@
+# The collection `tomblancdev.arcade` — the platform's roles, shipped from
+# the repo's ansible/ directory. A lab pins it by tag:
+#   collections:
+#     - name: https://github.com/tomblancdev/arcade.git#/ansible/
+#       type: git
+#       version: v0.1.0
+namespace: tomblancdev
+name: arcade
+version: 0.1.0
+readme: README.md
+authors:
+  - Tom Blanc <dev@tomblanc.fr>
+description: "L'Arcade — a platform of bricks for a home games console and dedicated game servers on Proxmox: the GPU-owner screen VM (Bazzite), emulation + streaming (RetroDECK, Sunshine), the library, a container per game server, the doorman"
+license:
+  - MIT
+tags:
+  - proxmox
+  - gaming
+  - sunshine
+  - moonlight
+  - retrodeck
+  - bazzite
+  - homelab
+repository: https://github.com/tomblancdev/arcade
+documentation: https://github.com/tomblancdev/arcade/tree/main/ansible
+homepage: https://github.com/tomblancdev/arcade
+issues: https://github.com/tomblancdev/arcade/issues
+build_ignore:
+  - "*.tar.gz"

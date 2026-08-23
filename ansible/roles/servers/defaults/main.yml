@@ -1,0 +1,12 @@
+---
+# servers — one podman Quadlet per dedicated game server. A lab passes the
+# `kind: server` projects of its games.yml; the role renders a unit each.
+arcade_servers_projects: {}
+#  minecraft:
+#    image: docker.io/itzg/minecraft-server:2026.8.1
+#    ports: [25565/tcp]
+#    limits: { cpus: 2, memory: 6g }
+#    idle_minutes: 20
+#    world: /srv/servers/minecraft           # nature: irreplaceable — the lab's backup layer decides
+#    env: { EULA: "TRUE" }
+arcade_servers_base: /srv/servers

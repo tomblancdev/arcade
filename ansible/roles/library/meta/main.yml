@@ -1,0 +1,12 @@
+---
+galaxy_info:
+  author: Tom Blanc
+  description: "the ROM store on the VM: NFS mount + rsync to local NVMe at every wake"
+  license: MIT
+  min_ansible_version: "2.16"
+  platforms:
+    - name: Fedora
+      versions: [all]
+    - name: Debian
+      versions: [all]
+dependencies: []

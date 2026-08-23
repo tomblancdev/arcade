@@ -1,0 +1,7 @@
+---
+# retrodeck — the emulation front. One Flatpak, its home on the live mount
+# (saves, states, ES-DE gamelists), ROMs read from the library.
+arcade_retrodeck_flatpak: net.retrodeck.retrodeck
+arcade_retrodeck_home: /srv/screen/retrodeck   # a `live` mount of the screen role
+arcade_retrodeck_roms: /srv/roms-cache         # the library's local copy
+arcade_retrodeck_user: "{{ arcade_screen_user | default('deck') }}"

@@ -1,0 +1,10 @@
+---
+# sunshine — the stream. Ports are Sunshine's defaults: a lab that changes
+# them hands the same table to its firewall rows (one place, never two).
+arcade_sunshine_ports:
+  tcp: [47984, 47989, 48010]           # https (pairing API), http, rtsp
+  udp: ["47998-48000"]                 # video, control, audio
+arcade_sunshine_admin_port: 47990      # the web UI (pairing PIN) — admins only
+arcade_sunshine_channels: 4            # simultaneous clients sharing one session = one controller each
+arcade_sunshine_apps: []               # [{ name: "Gaming Mode", cmd: "..." }, ...] — the apps list Moonlight shows
+arcade_sunshine_user: "{{ arcade_screen_user | default('deck') }}"

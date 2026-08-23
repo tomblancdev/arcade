@@ -1,0 +1,12 @@
+---
+galaxy_info:
+  author: Tom Blanc
+  description: "the stream: Sunshine ports, channels, apps, pairing"
+  license: MIT
+  min_ansible_version: "2.16"
+  platforms:
+    - name: Fedora
+      versions: [all]
+    - name: Debian
+      versions: [all]
+dependencies: []

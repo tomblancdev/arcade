@@ -1,0 +1,11 @@
+/arcade
+/dist/
+/data/
+.env
+# ansible-galaxy collection build output
+*.tar.gz
+# tofu working files (CI validates with -backend=false)
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*

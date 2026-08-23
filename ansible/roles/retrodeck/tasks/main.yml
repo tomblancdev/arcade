@@ -1,0 +1,5 @@
+---
+# retrodeck — the emulation front: RetroDECK Flatpak on the live mount, ROMs from the library
+# Lands at G1 (the platform's build plan). The contract is in defaults/main.yml;
+# installing the collection before the role exists is the point: the pin and
+# the data land first, the tasks fill in at their gate.
