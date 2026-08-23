@@ -18,6 +18,11 @@ arcade_sunshine_home: /srv/screen/sunshine   # config + pairings + the admin's c
 # the web UI's login, set here (no first-run page); empty = left to the UI
 arcade_sunshine_admin_user: ""
 arcade_sunshine_admin_password: ""
+# force a specific hardware encoder ('' = Sunshine auto-picks). On AMD/Intel
+# Linux this should be `vaapi`: Sunshine's auto-pick may choose the immature
+# Vulkan video encoder (hevc_vulkan), which crawls on Navi 10 (~5 fps at 4K) -
+# vaapi uses the dedicated VCN hardware encoder (arcade G1, 2026-08-23).
+arcade_sunshine_encoder: ""
 # sunshine.conf keys the lab sets; the rest stay upstream's defaults
 arcade_sunshine_config:
   capture: kms                         # Gaming Mode (gamescope) is captured through KMS

@@ -150,7 +150,7 @@
     owner: "{{ arcade_sunshine_user }}"
     group: "{{ arcade_sunshine_user }}"
     mode: "0600"
-  loop: "{{ (arcade_sunshine_config | combine({'channels': arcade_sunshine_channels, 'port': arcade_sunshine_port_base, 'sunshine_name': arcade_sunshine_name})) | dict2items }}"
+  loop: "{{ (arcade_sunshine_config | combine({'channels': arcade_sunshine_channels, 'port': arcade_sunshine_port_base, 'sunshine_name': arcade_sunshine_name}) | combine({'encoder': arcade_sunshine_encoder} if arcade_sunshine_encoder != '' else {})) | dict2items }}"
   loop_control: { label: "{{ item.key }}" }
   notify: arcade sunshine restart
 
