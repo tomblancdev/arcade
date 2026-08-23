@@ -33,12 +33,10 @@
     or arcade_retrodeck_roms not in arcade_retrodeck_override.stdout
     or (arcade_retrodeck_state != '' and arcade_retrodeck_state not in arcade_retrodeck_override.stdout)
 
-- name: The home is there (local NVMe, owned by the player)
-  ansible.builtin.file:
-    path: "{{ arcade_retrodeck_home }}"
-    state: directory
-    owner: "{{ arcade_retrodeck_user }}"
-    group: "{{ arcade_retrodeck_user }}"
+# NB: do NOT pre-create the home dir - RetroDECK nests its own `retrodeck/`
+# under an existing path (that is how this install ended up 3 levels deep).
+# On a fresh box RetroDECK's Internal option lands at ~/retrodeck by itself;
+# we discover wherever it actually put it (above) and never assume the depth.
 
 # --- the irreplaceable, hand-made state lives on the tank (live), the rest
 # local. Gated on the home being INITIALISED (the ES-DE dir the first-run
@@ -46,13 +44,25 @@
 # links. Idempotent + handles a non-empty fresh folder (a gamelist template):
 # only if the home subfolder is not already a symlink, preserve its content
 # onto the tank, remove it, then link. The tank holds the truth after.
-- name: RetroDECK's home is initialised (the wizard has run)?
-  ansible.builtin.stat:
-    path: "{{ arcade_retrodeck_home }}/ES-DE"
+# RetroDECK nests its own `retrodeck/` folder(s) under the chosen path, so
+# the real home is wherever ES-DE's ROMDirectory points (minus /roms) - the
+# only reliable truth. Discover it; pre-wizard (no es_settings.xml) it's
+# absent and the state block skips.
+- name: ES-DE settings (the wizard has run)?
+  ansible.builtin.slurp:
+    src: "/var/home/{{ arcade_retrodeck_user }}/.var/app/{{ arcade_retrodeck_flatpak }}/config/ES-DE/settings/es_settings.xml"
   register: arcade_retrodeck_esde
+  failed_when: false
 
-- name: State bits (only once the home exists and a state mount is set)
-  when: arcade_retrodeck_state != '' and arcade_retrodeck_esde.stat.exists
+- name: The real home = dirname(ES-DE ROMDirectory)
+  ansible.builtin.set_fact:
+    arcade_retrodeck_rdhome: >-
+      {{ ((arcade_retrodeck_esde.content | b64decode
+          | regex_search('ROMDirectory\" value=\"([^\"]+)', '\1'))
+          | first | dirname) if arcade_retrodeck_esde.content is defined else '' }}
+
+- name: State bits (only once the home is discovered and a state mount is set)
+  when: arcade_retrodeck_state != '' and arcade_retrodeck_rdhome != ''
   block:
     - name: The state folders exist on the tank mount
       ansible.builtin.file:
@@ -63,7 +73,7 @@
     - name: The precious folders live on the tank, symlinked into the home (live)
       ansible.builtin.shell:
         cmd: >-
-          h={{ arcade_retrodeck_home | quote }}/{{ item.home }};
+          h={{ arcade_retrodeck_rdhome | quote }}/{{ item.home }};
           t={{ arcade_retrodeck_state | quote }}/{{ item.tank }};
           if [ -L "$h" ]; then exit 0; fi;
           if [ -d "$h" ]; then rsync -a --ignore-existing "$h"/ "$t"/ && rm -rf "$h"; fi;
@@ -79,12 +89,14 @@
         {{ out }}
       loop_control: { label: "{{ item.home }}" }
 
-- name: <home>/roms -> the library's local copy
+- name: <home>/roms -> the library's local copy (at the discovered home)
   ansible.builtin.file:
     src: "{{ arcade_retrodeck_roms }}"
-    dest: "{{ arcade_retrodeck_home }}/roms"
+    dest: "{{ (arcade_retrodeck_rdhome | default('', true)) or arcade_retrodeck_home }}/roms"
     state: link
     force: true
+  when: (arcade_retrodeck_rdhome | default('', true)) != ''
+  # force-replacing a non-empty roms dir fails safely; the fresh one is empty
 
 - name: Its config (written by the first-run wizard at the screen)
   ansible.builtin.stat:
