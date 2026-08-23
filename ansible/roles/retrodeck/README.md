@@ -1,8 +1,11 @@
 # retrodeck
 
-The emulation front: the RetroDECK Flatpak (system-wide, Flathub), the
-sandbox granted its home and the ROM cache, `<home>/roms` → the library's
-copy, and `retrodeck.cfg` kept pointing at the home on the live mount. The
-first run is a wizard at the screen (custom location = the home), adding
-RetroDECK to Steam is its Configurator's button — both once. Contract:
+The emulation front: the RetroDECK Flatpak (system, Flathub). Its home is
+**local NVMe** (a RetroDECK home is ~50k small files — cores, configs,
+shaders; on NFS every op is a network round-trip). Only the irreplaceable,
+hand-made state is symlinked to the **tank, live** (`arcade_retrodeck_state`):
+`saves`, `states`, `screenshots`, and ES-DE `gamelists` (the catalogue — play
+counts, favourites, custom names); the regenerable bulk stays local. `roms` →
+the library's local copy. First run: launch RetroDECK, pick the
+**Internal/default** location, then converge to symlink the state. Contract:
 [`defaults/main.yml`](defaults/main.yml).

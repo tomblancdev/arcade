@@ -23,14 +23,76 @@
   changed_when: false
   check_mode: false
 
-- name: — granted
-  ansible.builtin.command: flatpak override --system {{ arcade_retrodeck_flatpak }} --filesystem={{ arcade_retrodeck_home }} --filesystem={{ arcade_retrodeck_roms }}
-  when: arcade_retrodeck_home not in arcade_retrodeck_override.stdout or arcade_retrodeck_roms not in arcade_retrodeck_override.stdout
+- name: — granted (home + the ROM cache + the tank state the symlinks resolve to)
+  ansible.builtin.command: >-
+    flatpak override --system {{ arcade_retrodeck_flatpak }}
+    --filesystem={{ arcade_retrodeck_home }} --filesystem={{ arcade_retrodeck_roms }}
+    {{ '--filesystem=' ~ arcade_retrodeck_state if arcade_retrodeck_state != '' else '' }}
+  when: >-
+    arcade_retrodeck_home not in arcade_retrodeck_override.stdout
+    or arcade_retrodeck_roms not in arcade_retrodeck_override.stdout
+    or (arcade_retrodeck_state != '' and arcade_retrodeck_state not in arcade_retrodeck_override.stdout)
 
-- name: The home is there (the live mount — the server squashes ownership, the sandbox writes as the player)
+- name: The home is there (local NVMe, owned by the player)
   ansible.builtin.file:
     path: "{{ arcade_retrodeck_home }}"
     state: directory
+    owner: "{{ arcade_retrodeck_user }}"
+    group: "{{ arcade_retrodeck_user }}"
+
+# --- the irreplaceable, hand-made state lives on the tank (live), the rest
+# local. Gated on the home being INITIALISED (the ES-DE dir the first-run
+# wizard creates): a pre-wizard converge does nothing, the post-wizard one
+# symlinks. A fresh home's state folders are empty (or a regenerable
+# template) - force-replaced with a symlink; the tank holds the truth after.
+- name: RetroDECK's home is initialised (the wizard has run)?
+  ansible.builtin.stat:
+    path: "{{ arcade_retrodeck_home }}/ES-DE"
+  register: arcade_retrodeck_esde
+
+- name: State bits (only once the home exists and a state mount is set)
+  when: arcade_retrodeck_state != '' and arcade_retrodeck_esde.stat.exists
+  block:
+    - name: The state folders exist on the tank mount
+      ansible.builtin.file:
+        path: "{{ arcade_retrodeck_state }}/{{ item }}"
+        state: directory
+      loop: "{{ arcade_retrodeck_state_dirs + ['gamelists'] }}"
+
+    - name: Preserve any fresh content into the tank before the symlink (one-time)
+      ansible.builtin.command:
+        cmd: >-
+          rsync -a --ignore-existing
+          {{ arcade_retrodeck_home }}/{{ item }}/ {{ arcade_retrodeck_state }}/{{ item }}/
+      loop: "{{ arcade_retrodeck_state_dirs }}"
+      changed_when: false
+      failed_when: false
+      when: arcade_retrodeck_esde.stat.exists
+
+    - name: saves / states / screenshots in the home -> the tank (symlinks)
+      ansible.builtin.file:
+        src: "{{ arcade_retrodeck_state }}/{{ item }}"
+        dest: "{{ arcade_retrodeck_home }}/{{ item }}"
+        state: link
+        force: true
+        follow: false
+      loop: "{{ arcade_retrodeck_state_dirs }}"
+
+    - name: The ES-DE gamelists content preserved, then linked to the tank (the catalogue)
+      ansible.builtin.command:
+        cmd: >-
+          rsync -a --ignore-existing
+          {{ arcade_retrodeck_home }}/{{ arcade_retrodeck_gamelists }}/ {{ arcade_retrodeck_state }}/gamelists/
+      changed_when: false
+      failed_when: false
+
+    - name: ES-DE gamelists -> the tank
+      ansible.builtin.file:
+        src: "{{ arcade_retrodeck_state }}/gamelists"
+        dest: "{{ arcade_retrodeck_home }}/{{ arcade_retrodeck_gamelists }}"
+        state: link
+        force: true
+        follow: false
 
 - name: <home>/roms -> the library's local copy
   ansible.builtin.file:
@@ -53,5 +115,5 @@
 
 - name: — or the wizard is still due
   ansible.builtin.debug:
-    msg: "first run pending: launch RetroDECK at the screen, choose a custom location: {{ arcade_retrodeck_home }} (then add RetroDECK to Steam from its Configurator)"
+    msg: "first run pending: launch RetroDECK, choose the INTERNAL/default location (lands at {{ arcade_retrodeck_home }}, local NVMe), add RetroDECK to Steam from its Configurator, then converge again to symlink the state to the tank"
   when: not arcade_retrodeck_cfg.stat.exists

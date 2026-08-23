@@ -14,6 +14,16 @@
     group: "{{ arcade_library_user }}"
     mode: "0755"
 
+# the unit must run AFTER the source is mounted: the condition is evaluated
+# at activation, and an NFS mount lands seconds after remote-fs.target on a
+# fresh boot (seen at G1: skipped at 13.1 s, mounted at 13.5 s). The mount
+# unit's name follows the canonical path (/srv -> /var/srv on Fedora Atomic).
+- name: The source's mount unit
+  ansible.builtin.command: sh -c 'systemd-escape -p --suffix=mount "$(readlink -f {{ arcade_library_source | quote }})"'
+  register: arcade_library_mount_unit
+  changed_when: false
+  check_mode: false
+
 - name: arcade-roms-sync — server -> NVMe at every wake
   ansible.builtin.template:
     src: arcade-roms-sync.service.j2

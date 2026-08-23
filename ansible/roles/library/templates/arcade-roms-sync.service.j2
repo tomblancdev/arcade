@@ -1,8 +1,8 @@
 # Managed by ansible (tomblancdev.arcade.library)
 [Unit]
 Description=arcade-roms-sync — the ROM store copied from the server to the local NVMe (every wake)
-After=network-online.target remote-fs.target
-Wants=network-online.target remote-fs.target
+After=network-online.target remote-fs.target {{ arcade_library_mount_unit.stdout }}
+Wants=network-online.target remote-fs.target {{ arcade_library_mount_unit.stdout }}
 # the server down = keep the last copy; never "sync" an empty mount point over it
 ConditionPathIsMountPoint={{ arcade_library_source }}
 

@@ -1,8 +1,19 @@
-# retrodeck — the emulation front. One Flatpak (system-wide), its home on
-# the live mount (saves, states, ES-DE gamelists, its config), ROMs read
-# from the library's local copy through <home>/roms -> the cache.
+# retrodeck — the emulation front. One Flatpak. Its home is LOCAL (NVMe): a
+# RetroDECK home is ~50k small files (cores, configs, shaders) — on NFS every
+# op is a network round-trip (first-run took 30 min). Only the irreplaceable,
+# hand-made state is symlinked to the tank, LIVE (small, fast over NFS,
+# sanoid 15 min): saves, states, screenshots, ES-DE gamelists (the catalogue).
+# The bulk (themes, scraped media, configs, shaders, BIOS) stays local,
+# regenerable. ROMs come from the library's local copy. (v0.2.2, arcade G1.)
 arcade_retrodeck_flatpak: net.retrodeck.retrodeck
 arcade_retrodeck_remote: flathub
-arcade_retrodeck_home: /srv/screen/retrodeck   # a `live` mount of the screen role
-arcade_retrodeck_roms: /srv/roms-cache         # the library's local copy
 arcade_retrodeck_user: "{{ arcade_screen_user | default('deck') }}"
+# RetroDECK's own default home (~/retrodeck) — LOCAL NVMe, and the wizard's
+# Internal/default option lands here, so no nesting/permission trap.
+arcade_retrodeck_home: "/var/home/{{ arcade_retrodeck_user }}/retrodeck"
+arcade_retrodeck_roms: /srv/roms-cache         # the library's local copy
+# the tank state mount (a `live` NFS mount of the screen role): empty = no
+# split (home fully local). Set it and these subfolders live on the tank.
+arcade_retrodeck_state: ""
+arcade_retrodeck_state_dirs: [saves, states, screenshots]
+arcade_retrodeck_gamelists: ES-DE/gamelists     # relative to the home -> state/gamelists
