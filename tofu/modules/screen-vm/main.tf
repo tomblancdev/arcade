@@ -77,7 +77,10 @@ resource "proxmox_virtual_environment_vm" "screen" {
     enabled = var.agent
   }
 
+  # usb: a raw host device (`usbN: host=vendor:product`) is root@pam-only in
+  # the PVE API — the install runbook's keyboard/mouse and a couch receiver
+  # are set by the node's machinery (qm set), never by this module
   lifecycle {
-    ignore_changes = [started]
+    ignore_changes = [started, usb]
   }
 }

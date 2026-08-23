@@ -26,3 +26,7 @@ arcade_passthrough_blacklist: [amdgpu, radeon]
 arcade_passthrough_vendor_reset_repo: https://github.com/gnif/vendor-reset.git
 arcade_passthrough_vendor_reset_version: cbb4dd50926337e0f9fe1dd1e8a74aa5cb3448a7   # 2026-06-29 (0.1.1 + the 6.12+ include fix, the 731f udev rule)
 arcade_passthrough_src: /usr/local/src/arcade
+# Secure Boot: the one-time password MokManager asks for at the next boot
+# when DKMS's key is enrolled (a secret from the lab's store; empty = the
+# operator runs `mokutil --import /var/lib/dkms/mok.pub` on the node himself)
+arcade_passthrough_mok_password: ""

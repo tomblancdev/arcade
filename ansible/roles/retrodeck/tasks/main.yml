@@ -27,12 +27,10 @@
   ansible.builtin.command: flatpak override --system {{ arcade_retrodeck_flatpak }} --filesystem={{ arcade_retrodeck_home }} --filesystem={{ arcade_retrodeck_roms }}
   when: arcade_retrodeck_home not in arcade_retrodeck_override.stdout or arcade_retrodeck_roms not in arcade_retrodeck_override.stdout
 
-- name: The home is there (the live mount), owned by the player's user
+- name: The home is there (the live mount — the server squashes ownership, the sandbox writes as the player)
   ansible.builtin.file:
     path: "{{ arcade_retrodeck_home }}"
     state: directory
-    owner: "{{ arcade_retrodeck_user }}"
-    group: "{{ arcade_retrodeck_user }}"
 
 - name: <home>/roms -> the library's local copy
   ansible.builtin.file:
@@ -40,8 +38,6 @@
     dest: "{{ arcade_retrodeck_home }}/roms"
     state: link
     force: true
-    owner: "{{ arcade_retrodeck_user }}"
-    group: "{{ arcade_retrodeck_user }}"
 
 - name: Its config (written by the first-run wizard at the screen)
   ansible.builtin.stat:

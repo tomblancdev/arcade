@@ -140,7 +140,7 @@
   loop: "{{ arcade_passthrough_kernels.stdout_lines | default([]) }}"
   when:
     - arcade_passthrough_vendor_reset
-    - arcade_passthrough_vr_src is changed or (arcade_passthrough_dkms.stdout_lines | select('search', ', ' ~ item ~ ', .*: installed') | list | length == 0)
+    - "arcade_passthrough_vr_src is changed or (arcade_passthrough_dkms.stdout_lines | select('search', ', ' ~ item ~ ', .*: installed') | list | length == 0)"
   register: arcade_passthrough_dkms_install
   notify:
     - arcade passthrough initramfs
@@ -180,15 +180,35 @@
   when: arcade_passthrough_vendor_reset and 'enabled' in (arcade_passthrough_sb.stdout | default(''))
 
 # MokManager takes over at the next boot: Enroll MOK -> Continue -> Yes ->
-# the root password (--root-pw: the hash from /etc/shadow, nothing typed here)
-- name: Queue the enrolment (the module loads only after the prompt at the screen)
-  ansible.builtin.command: mokutil --import /var/lib/dkms/mok.pub --root-pw
+# the one-time password. Two ways to queue it: a password from data
+# (generate-hash -> hash-file, never typed), or the operator's own
+# `mokutil --import /var/lib/dkms/mok.pub` on the node (it asks twice).
+# (`--root-pw` reads /etc/shadow and cannot parse yescrypt hashes — Debian 13.)
+- name: Queue the enrolment (a password from data; the module loads only after the prompt at the screen)
+  ansible.builtin.shell: |
+    set -e
+    umask 077
+    mokutil --generate-hash={{ arcade_passthrough_mok_password | quote }} > /root/.arcade-mok.hash
+    mokutil --import /var/lib/dkms/mok.pub --hash-file /root/.arcade-mok.hash
+    shred -u /root/.arcade-mok.hash
   register: arcade_passthrough_mok_import
+  no_log: true
   when:
     - arcade_passthrough_vendor_reset
     - "'enabled' in (arcade_passthrough_sb.stdout | default(''))"
     - "'is not enrolled' in (arcade_passthrough_mok.stdout | default(''))"
     - "'[key 1]' not in (arcade_passthrough_mok_new.stdout | default(''))"
+    - arcade_passthrough_mok_password != ''
+
+- name: "— or the operator queues it: the key is not enrolled and nothing is queued"
+  ansible.builtin.debug:
+    msg: "Secure Boot is on and DKMS's key is not enrolled — vendor-reset cannot load until it is. On {{ inventory_hostname }} as root: `mokutil --import /var/lib/dkms/mok.pub` (asks for a one-time password, twice), then reboot: MokManager -> Enroll MOK -> Continue -> Yes -> that password. Or set arcade_passthrough_mok_password."
+  when:
+    - arcade_passthrough_vendor_reset
+    - "'enabled' in (arcade_passthrough_sb.stdout | default(''))"
+    - "'is not enrolled' in (arcade_passthrough_mok.stdout | default(''))"
+    - "'[key 1]' not in (arcade_passthrough_mok_new.stdout | default(''))"
+    - arcade_passthrough_mok_password == ''
 
 # --- the cluster PCI mapping: what a VM's hostpci line names -----------------
 - name: The mapping as the cluster has it

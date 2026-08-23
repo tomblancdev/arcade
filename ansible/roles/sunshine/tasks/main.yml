@@ -25,6 +25,20 @@
     fail_msg: "arcade_sunshine_ports / admin_port do not derive from arcade_sunshine_port_base {{ arcade_sunshine_port_base }} (tcp = base-5, base, base+21; web UI = base+1; udp = base+9..+11)"
     quiet: true
 
+# Fedora Atomic keeps system groups in the read-only /usr/lib/group — a
+# membership can only be written once the group line also lives in /etc/group
+- name: The input group as the image defines it
+  ansible.builtin.command: getent group input
+  register: arcade_sunshine_input_group
+  changed_when: false
+  check_mode: false
+
+- name: — present in /etc/group (where memberships can be written)
+  ansible.builtin.lineinfile:
+    path: /etc/group
+    regexp: "^input:"
+    line: "{{ arcade_sunshine_input_group.stdout }}"
+
 - name: "The player's user — in input (uinput: virtual pads for remote players)"
   ansible.builtin.user:
     name: "{{ arcade_sunshine_user }}"
@@ -51,13 +65,21 @@
   changed_when: "'now trusted' in (arcade_sunshine_trust.stdout | default(''))"
   failed_when: false
 
+- name: The taps as brew lists them
+  ansible.builtin.command: "{{ arcade_sunshine_brew }} tap"
+  become: true
+  become_user: "{{ arcade_sunshine_user }}"
+  environment: { HOMEBREW_NO_AUTO_UPDATE: "1" }
+  register: arcade_sunshine_taps
+  changed_when: false
+  check_mode: false
+
 - name: The tap
   ansible.builtin.command: "{{ arcade_sunshine_brew }} tap LizardByte/homebrew"
   become: true
   become_user: "{{ arcade_sunshine_user }}"
   environment: { HOMEBREW_NO_AUTO_UPDATE: "1" }
-  args:
-    creates: "{{ arcade_sunshine_brew | dirname | dirname }}/Library/Taps/lizardbyte/homebrew-homebrew"
+  when: "'lizardbyte/homebrew' not in (arcade_sunshine_taps.stdout | lower)"
 
 - name: Sunshine installed ({{ arcade_sunshine_package }})
   community.general.homebrew:
@@ -76,9 +98,14 @@
   register: arcade_sunshine_pin
   changed_when: "'Pinned' in (arcade_sunshine_pin.stdout | default(''))"
 
-- name: The capability KMS capture needs + the uinput rule (Bazzite's helper; re-applied after every upgrade)
+# the helper resolves `which sunshine`: brew's bin must be on root's PATH
+- name: The capability KMS capture needs + the uinput/uhid rules (Bazzite's helper; re-applied after every upgrade)
   ansible.builtin.command: "{{ arcade_sunshine_postinst }}"
+  environment:
+    PATH: "{{ arcade_sunshine_brew | dirname }}:{{ ansible_env.PATH }}"
+  register: arcade_sunshine_postinst_run
   changed_when: false
+  failed_when: "'error' in (arcade_sunshine_postinst_run.stdout | lower) or arcade_sunshine_postinst_run.rc != 0"
 
 # --- one directory per service -------------------------------------------------
 - name: The config dir on /srv
@@ -198,14 +225,15 @@
 - name: Flush (config live before the health check)
   ansible.builtin.meta: flush_handlers
 
-- name: Health — the pairing API answers
+# the https pairing API (base-5) demands a client certificate (a paired
+# Moonlight's) — the plain http serverinfo is what an unpaired client reads
+- name: Health — serverinfo answers
   ansible.builtin.uri:
-    url: "https://127.0.0.1:{{ arcade_sunshine_port_base | int - 5 }}/"
-    validate_certs: false
-    status_code: [200, 404]
+    url: "http://127.0.0.1:{{ arcade_sunshine_port_base }}/serverinfo"
+    return_content: true
   register: arcade_sunshine_health
   retries: 12
   delay: 5
-  until: arcade_sunshine_health.status in [200, 404]
+  until: arcade_sunshine_health.status == 200 and 'hostname' in (arcade_sunshine_health.content | default(''))
   changed_when: false
   when: not ansible_check_mode
