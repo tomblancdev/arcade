@@ -1,5 +1,32 @@
+# library — the ROM store's local copy. One unit: arcade-roms-sync (oneshot,
+# at every boot; the mount's absence skips it).
 ---
-# library — the ROM store on the VM: NFS mount + rsync to local NVMe at every wake
-# Lands at G1 (the platform's build plan). The contract is in defaults/main.yml;
-# installing the collection before the role exists is the point: the pin and
-# the data land first, the tasks fill in at their gate.
+- name: rsync in the image
+  ansible.builtin.command: rpm -q rsync
+  changed_when: false
+  check_mode: false
+
+- name: The cache, owned by the player's user
+  ansible.builtin.file:
+    path: "{{ arcade_library_cache }}"
+    state: directory
+    owner: "{{ arcade_library_user }}"
+    group: "{{ arcade_library_user }}"
+    mode: "0755"
+
+- name: arcade-roms-sync — server -> NVMe at every wake
+  ansible.builtin.template:
+    src: arcade-roms-sync.service.j2
+    dest: /etc/systemd/system/arcade-roms-sync.service
+    mode: "0644"
+  notify: arcade library reload
+
+- name: Flush (the unit file is read before it is started)
+  ansible.builtin.meta: flush_handlers
+
+- name: Enabled (every boot) and run once now
+  ansible.builtin.systemd:
+    name: arcade-roms-sync
+    enabled: "{{ arcade_library_sync_at_wake }}"
+    state: "{{ 'started' if arcade_library_sync_at_wake else 'stopped' }}"
+    daemon_reload: true

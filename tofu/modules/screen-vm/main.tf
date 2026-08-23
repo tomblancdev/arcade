@@ -8,7 +8,7 @@ resource "proxmox_virtual_environment_vm" "screen" {
   name        = var.name
   description = var.description
   tags        = var.tags
-  on_boot     = false # the node wakes for backups too — the doorman starts the console, not the boot
+  on_boot     = var.on_boot # false once a doorman owns the wake (the node wakes for backups too); true = one WoL, the console is up
   started     = false
 
   bios    = "ovmf"

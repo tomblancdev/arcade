@@ -1,0 +1,30 @@
+# Managed by ansible (tomblancdev.arcade.screen) — the shipper as a container:
+# journald + node metrics (the card's hwmon) -> the aggregator. Host pid/net,
+# SELinux label off: it reads the host's journal, /proc and /sys as root.
+[Unit]
+Description=arcade-alloy — Grafana Alloy, the screen VM's log/metric shipper
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+Image={{ arcade_screen_alloy_image }}
+ContainerName=arcade-alloy
+Network=host
+PodmanArgs=--pid=host
+SecurityLabelDisable=true
+Volume=/etc/arcade/alloy/config.alloy:/etc/alloy/config.alloy:ro
+Volume=/var/lib/arcade/alloy:/var/lib/alloy/data
+Volume=/var/log/journal:/var/log/journal:ro
+Volume=/run/log/journal:/run/log/journal:ro
+Volume=/etc/machine-id:/etc/machine-id:ro
+Volume=/proc:/host/proc:ro
+Volume=/sys:/host/sys:ro
+Volume=/:/host/root:ro,rslave
+Exec=run --server.http.listen-addr=127.0.0.1:12345 --storage.path=/var/lib/alloy/data --disable-reporting /etc/alloy/config.alloy
+
+[Service]
+Restart=always
+TimeoutStartSec=900
+
+[Install]
+WantedBy=multi-user.target

@@ -3,10 +3,10 @@
 #   collections:
 #     - name: https://github.com/tomblancdev/arcade.git#/ansible/
 #       type: git
-#       version: v0.1.0
+#       version: v0.2.0
 namespace: tomblancdev
 name: arcade
-version: 0.1.0
+version: 0.2.0
 readme: README.md
 authors:
   - Tom Blanc <dev@tomblanc.fr>

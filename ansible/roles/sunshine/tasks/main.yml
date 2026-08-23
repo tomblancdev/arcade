@@ -1,5 +1,211 @@
+# sunshine — the stream, Bazzite's brew route as code. Order: the pieces are
+# here → the tap + the package (pinned) → the capability (Bazzite's helper)
+# → one config dir on /srv → sunshine.conf → the admin's creds → the user
+# unit (linger: it answers right after boot, before anyone logs in).
 ---
-# sunshine — the stream: Sunshine ports, channels, apps, pairing
-# Lands at G1 (the platform's build plan). The contract is in defaults/main.yml;
-# installing the collection before the role exists is the point: the pin and
-# the data land first, the tasks fill in at their gate.
+- name: Bazzite's pieces are here (brew, the postinst helper)
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop: ["{{ arcade_sunshine_brew }}", "{{ arcade_sunshine_postinst }}"]
+  register: arcade_sunshine_pieces
+
+- name: Refuse an image without them
+  ansible.builtin.assert:
+    that: arcade_sunshine_pieces.results | rejectattr('stat.exists') | list | length == 0
+    fail_msg: "missing: {{ arcade_sunshine_pieces.results | rejectattr('stat.exists') | map(attribute='item') | list }} — this role follows Bazzite's own recipe (ujust setup-sunshine)"
+    quiet: true
+
+- name: The ports table agrees with the base port (the rows read the table, Sunshine reads the base)
+  ansible.builtin.assert:
+    that:
+      - (arcade_sunshine_port_base | int - 5) in (arcade_sunshine_ports.tcp | map('int') | list)
+      - (arcade_sunshine_port_base | int) in (arcade_sunshine_ports.tcp | map('int') | list)
+      - (arcade_sunshine_port_base | int + 21) in (arcade_sunshine_ports.tcp | map('int') | list)
+      - (arcade_sunshine_admin_port | int) == (arcade_sunshine_port_base | int + 1)
+    fail_msg: "arcade_sunshine_ports / admin_port do not derive from arcade_sunshine_port_base {{ arcade_sunshine_port_base }} (tcp = base-5, base, base+21; web UI = base+1; udp = base+9..+11)"
+    quiet: true
+
+- name: "The player's user — in input (uinput: virtual pads for remote players)"
+  ansible.builtin.user:
+    name: "{{ arcade_sunshine_user }}"
+    groups: [input]
+    append: true
+
+- name: Its uid
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ arcade_sunshine_user }}"
+
+- name: Facts
+  ansible.builtin.set_fact:
+    arcade_sunshine_uid: "{{ ansible_facts.getent_passwd[arcade_sunshine_user][1] }}"
+    arcade_sunshine_userhome: "{{ ansible_facts.getent_passwd[arcade_sunshine_user][4] }}"
+
+# --- the package: brew, as the user ------------------------------------------
+- name: The LizardByte tap, trusted (a third-party tap's commands need it on recent brews)
+  ansible.builtin.command: "{{ arcade_sunshine_brew }} trust LizardByte/homebrew"
+  become: true
+  become_user: "{{ arcade_sunshine_user }}"
+  environment: { HOMEBREW_NO_AUTO_UPDATE: "1" }
+  register: arcade_sunshine_trust
+  changed_when: "'now trusted' in (arcade_sunshine_trust.stdout | default(''))"
+  failed_when: false
+
+- name: The tap
+  ansible.builtin.command: "{{ arcade_sunshine_brew }} tap LizardByte/homebrew"
+  become: true
+  become_user: "{{ arcade_sunshine_user }}"
+  environment: { HOMEBREW_NO_AUTO_UPDATE: "1" }
+  args:
+    creates: "{{ arcade_sunshine_brew | dirname | dirname }}/Library/Taps/lizardbyte/homebrew-homebrew"
+
+- name: Sunshine installed ({{ arcade_sunshine_package }})
+  community.general.homebrew:
+    name: "{{ arcade_sunshine_package }}"
+    state: present
+    path: "{{ arcade_sunshine_brew | dirname }}"
+  become: true
+  become_user: "{{ arcade_sunshine_user }}"
+  environment: { HOMEBREW_NO_AUTO_UPDATE: "1" }
+
+- name: Pinned (an update is a deliberate bump of the role, not a side effect)
+  ansible.builtin.shell: "{{ arcade_sunshine_brew }} list --pinned | grep -qx {{ arcade_sunshine_package }} || {{ arcade_sunshine_brew }} pin {{ arcade_sunshine_package }}"
+  become: true
+  become_user: "{{ arcade_sunshine_user }}"
+  environment: { HOMEBREW_NO_AUTO_UPDATE: "1" }
+  register: arcade_sunshine_pin
+  changed_when: "'Pinned' in (arcade_sunshine_pin.stdout | default(''))"
+
+- name: The capability KMS capture needs + the uinput rule (Bazzite's helper; re-applied after every upgrade)
+  ansible.builtin.command: "{{ arcade_sunshine_postinst }}"
+  changed_when: false
+
+# --- one directory per service -------------------------------------------------
+- name: The config dir on /srv
+  ansible.builtin.file:
+    path: "{{ arcade_sunshine_home }}"
+    state: directory
+    owner: "{{ arcade_sunshine_user }}"
+    group: "{{ arcade_sunshine_user }}"
+    mode: "0700"
+
+- name: ~/.config/sunshine as it is
+  ansible.builtin.stat:
+    path: "{{ arcade_sunshine_userhome }}/.config/sunshine"
+  register: arcade_sunshine_dotconfig
+
+- name: A real directory there moves into the service dir (once)
+  ansible.builtin.shell: cp -an {{ arcade_sunshine_userhome }}/.config/sunshine/. {{ arcade_sunshine_home }}/ && rm -rf {{ arcade_sunshine_userhome }}/.config/sunshine
+  when: arcade_sunshine_dotconfig.stat.exists and arcade_sunshine_dotconfig.stat.isdir and not arcade_sunshine_dotconfig.stat.islnk
+
+- name: ~/.config exists
+  ansible.builtin.file:
+    path: "{{ arcade_sunshine_userhome }}/.config"
+    state: directory
+    owner: "{{ arcade_sunshine_user }}"
+    group: "{{ arcade_sunshine_user }}"
+    mode: "0700"
+
+- name: ~/.config/sunshine -> the service dir
+  ansible.builtin.file:
+    src: "{{ arcade_sunshine_home }}"
+    dest: "{{ arcade_sunshine_userhome }}/.config/sunshine"
+    state: link
+    owner: "{{ arcade_sunshine_user }}"
+    group: "{{ arcade_sunshine_user }}"
+
+- name: sunshine.conf — the keys the lab sets
+  ansible.builtin.lineinfile:
+    path: "{{ arcade_sunshine_home }}/sunshine.conf"
+    regexp: "^{{ item.key }}\\s*="
+    line: "{{ item.key }} = {{ item.value }}"
+    create: true
+    owner: "{{ arcade_sunshine_user }}"
+    group: "{{ arcade_sunshine_user }}"
+    mode: "0600"
+  loop: "{{ (arcade_sunshine_config | combine({'channels': arcade_sunshine_channels, 'port': arcade_sunshine_port_base, 'sunshine_name': arcade_sunshine_name})) | dict2items }}"
+  loop_control: { label: "{{ item.key }}" }
+  notify: arcade sunshine restart
+
+# --- the admin's credentials (no first-run page), replayed only when they change ---
+- name: The creds marker as it is
+  ansible.builtin.stat:
+    path: "{{ arcade_sunshine_home }}/.creds.sha256"
+  register: arcade_sunshine_marker
+  when: arcade_sunshine_admin_user != ''
+
+- name: Read it
+  ansible.builtin.slurp:
+    src: "{{ arcade_sunshine_home }}/.creds.sha256"
+  register: arcade_sunshine_marker_content
+  when: arcade_sunshine_admin_user != '' and arcade_sunshine_marker.stat.exists
+  no_log: true
+
+- name: Set them
+  ansible.builtin.command: "{{ arcade_sunshine_brew | dirname }}/sunshine --creds {{ arcade_sunshine_admin_user | quote }} {{ arcade_sunshine_admin_password | quote }}"
+  become: true
+  become_user: "{{ arcade_sunshine_user }}"
+  when: arcade_sunshine_admin_user != '' and (not arcade_sunshine_marker.stat.exists or (arcade_sunshine_marker_content.content | b64decode | trim) != ((arcade_sunshine_admin_user ~ ':' ~ arcade_sunshine_admin_password) | hash('sha256')))
+  no_log: true
+  notify: arcade sunshine restart
+
+- name: Remember what was set (a hash, never the secret)
+  ansible.builtin.copy:
+    dest: "{{ arcade_sunshine_home }}/.creds.sha256"
+    content: "{{ (arcade_sunshine_admin_user ~ ':' ~ arcade_sunshine_admin_password) | hash('sha256') }}\n"
+    owner: "{{ arcade_sunshine_user }}"
+    group: "{{ arcade_sunshine_user }}"
+    mode: "0600"
+  when: arcade_sunshine_admin_user != ''
+  no_log: true
+
+# --- the unit: a user service, alive from boot (linger) --------------------------
+- name: The user's manager runs without a login (linger)
+  ansible.builtin.command: loginctl enable-linger {{ arcade_sunshine_user }}
+  args:
+    creates: "/var/lib/systemd/linger/{{ arcade_sunshine_user }}"
+
+- name: User unit dir
+  ansible.builtin.file:
+    path: "{{ arcade_sunshine_userhome }}/.config/systemd/user"
+    state: directory
+    owner: "{{ arcade_sunshine_user }}"
+    group: "{{ arcade_sunshine_user }}"
+    mode: "0755"
+
+- name: arcade-sunshine.service
+  ansible.builtin.template:
+    src: arcade-sunshine.service.j2
+    dest: "{{ arcade_sunshine_userhome }}/.config/systemd/user/arcade-sunshine.service"
+    owner: "{{ arcade_sunshine_user }}"
+    group: "{{ arcade_sunshine_user }}"
+    mode: "0644"
+  notify: arcade sunshine restart
+
+- name: Enabled + running (as the user)
+  ansible.builtin.systemd:
+    name: arcade-sunshine
+    scope: user
+    enabled: true
+    state: started
+    daemon_reload: true
+  become: true
+  become_user: "{{ arcade_sunshine_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ arcade_sunshine_uid }}"
+    DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ arcade_sunshine_uid }}/bus"
+
+- name: Flush (config live before the health check)
+  ansible.builtin.meta: flush_handlers
+
+- name: Health — the pairing API answers
+  ansible.builtin.uri:
+    url: "https://127.0.0.1:{{ arcade_sunshine_port_base | int - 5 }}/"
+    validate_certs: false
+    status_code: [200, 404]
+  register: arcade_sunshine_health
+  retries: 12
+  delay: 5
+  until: arcade_sunshine_health.status in [200, 404]
+  changed_when: false
+  when: not ansible_check_mode

@@ -1,0 +1,10 @@
+---
+galaxy_info:
+  author: Tom Blanc
+  description: "the node that carries a card a VM owns: vfio at boot, vendor-reset, the cluster PCI mapping + who may use it"
+  license: MIT
+  min_ansible_version: "2.16"
+  platforms:
+    - name: Debian
+      versions: [all]
+dependencies: []

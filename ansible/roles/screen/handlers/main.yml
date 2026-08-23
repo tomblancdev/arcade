@@ -1,0 +1,18 @@
+---
+- name: arcade screen sshd
+  ansible.builtin.service:
+    name: sshd
+    state: restarted
+
+- name: arcade screen idle
+  ansible.builtin.systemd:
+    name: arcade-idle
+    state: restarted
+    daemon_reload: true
+  when: arcade_screen_idle_minutes | int > 0
+
+- name: arcade screen alloy
+  ansible.builtin.systemd:
+    name: arcade-alloy
+    state: restarted
+    daemon_reload: true

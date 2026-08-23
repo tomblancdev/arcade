@@ -1,0 +1,12 @@
+---
+- name: arcade sunshine restart
+  ansible.builtin.systemd:
+    name: arcade-sunshine
+    scope: user
+    state: restarted
+    daemon_reload: true
+  become: true
+  become_user: "{{ arcade_sunshine_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ arcade_sunshine_uid }}"
+    DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ arcade_sunshine_uid }}/bus"

@@ -1,10 +1,26 @@
----
-# sunshine — the stream. Ports are Sunshine's defaults: a lab that changes
-# them hands the same table to its firewall rows (one place, never two).
+# sunshine — the stream. Bazzite's own route for Deck images (its
+# `ujust setup-sunshine` recipe): the Homebrew package from LizardByte's tap
+# — the Flatpak cannot capture Gaming Mode (KMS) — pinned, run as a user
+# unit of the player's user. Ports are Sunshine's defaults: a lab that
+# changes them hands the same table to its firewall rows (one place).
 arcade_sunshine_ports:
   tcp: [47984, 47989, 48010]           # https (pairing API), http, rtsp
   udp: ["47998-48000"]                 # video, control, audio
 arcade_sunshine_admin_port: 47990      # the web UI (pairing PIN) — admins only
+arcade_sunshine_port_base: 47989       # Sunshine derives every port from it: -5 https, +1 web UI, +21 rtsp, +9..+11 udp
 arcade_sunshine_channels: 4            # simultaneous clients sharing one session = one controller each
-arcade_sunshine_apps: []               # [{ name: "Gaming Mode", cmd: "..." }, ...] — the apps list Moonlight shows
 arcade_sunshine_user: "{{ arcade_screen_user | default('deck') }}"
+arcade_sunshine_name: "{{ arcade_screen_hostname | default('console') }}"
+arcade_sunshine_package: sunshine      # the brew formula (sunshine | sunshine-beta)
+arcade_sunshine_brew: /home/linuxbrew/.linuxbrew/bin/brew
+arcade_sunshine_postinst: /usr/libexec/sunshine-postinst   # Bazzite's helper: the capability KMS capture needs + the uinput rule
+arcade_sunshine_home: /srv/screen/sunshine   # config + pairings + the admin's credentials — one directory per service
+# the web UI's login, set here (no first-run page); empty = left to the UI
+arcade_sunshine_admin_user: ""
+arcade_sunshine_admin_password: ""
+# sunshine.conf keys the lab sets; the rest stay upstream's defaults
+arcade_sunshine_config:
+  capture: kms                         # Gaming Mode (gamescope) is captured through KMS
+  system_tray: disabled
+  origin_web_ui_allowed: lan           # the admin UI from private addresses (the firewall rows do the real gating)
+  address_family: ipv4

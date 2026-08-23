@@ -1,0 +1,91 @@
+// Managed by ansible (tomblancdev.arcade.screen) — the screen VM's shipper.
+// Push model: this guest enrolls itself into the aggregator.
+
+// ---- journald -> Loki ------------------------------------------------------
+loki.relabel "journal" {
+	forward_to = []
+
+	rule {
+		source_labels = ["__journal__systemd_unit"]
+		target_label  = "unit"
+	}
+	// the stream and the apps run as user services: their unit is this one
+	rule {
+		source_labels = ["__journal__systemd_user_unit"]
+		target_label  = "user_unit"
+	}
+	rule {
+		source_labels = ["__journal_syslog_identifier"]
+		target_label  = "ident"
+	}
+	rule {
+		source_labels = ["__journal_priority_keyword"]
+		target_label  = "level"
+	}
+	rule {
+		source_labels = ["__journal__systemd_unit"]
+		regex         = "{{ arcade_screen_security_units | join('|') }}"
+		target_label  = "security"
+		replacement   = "auth"
+	}
+	rule {
+		source_labels = ["__journal_syslog_identifier"]
+		regex         = "{{ arcade_screen_security_idents | join('|') }}"
+		target_label  = "security"
+		replacement   = "auth"
+	}
+}
+
+loki.source.journal "host" {
+	path          = "/var/log/journal"
+	max_age       = "12h"
+	relabel_rules = loki.relabel.journal.rules
+	labels        = { host = "{{ arcade_screen_hostname }}", job = "journal" }
+	forward_to    = [loki.write.eyes.receiver]
+}
+
+loki.write "eyes" {
+	endpoint {
+		url = "{{ arcade_screen_loki_url }}"
+	}
+}
+{% if arcade_screen_prometheus_url %}
+
+// ---- node metrics -> Prometheus (remote_write) -----------------------------
+// the host's /proc, /sys, / are mounted under /host: hwmon = the card's
+// temperature and power (amdgpu), the reason metrics exist here at all
+prometheus.exporter.unix "host" {
+	procfs_path = "/host/proc"
+	sysfs_path  = "/host/sys"
+	rootfs_path = "/host/root"
+}
+
+discovery.relabel "host" {
+	targets = prometheus.exporter.unix.host.targets
+
+	rule {
+		target_label = "instance"
+		replacement  = "{{ arcade_screen_hostname }}"
+	}
+	rule {
+		target_label = "host"
+		replacement  = "{{ arcade_screen_hostname }}"
+	}
+	rule {
+		target_label = "job"
+		replacement  = "node"
+	}
+}
+
+prometheus.scrape "host" {
+	targets         = discovery.relabel.host.output
+	scrape_interval = "15s"
+	forward_to      = [prometheus.remote_write.eyes.receiver]
+}
+
+prometheus.remote_write "eyes" {
+	endpoint {
+		url = "{{ arcade_screen_prometheus_url }}"
+	}
+}
+{% endif %}

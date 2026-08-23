@@ -1,0 +1,124 @@
+#!/usr/bin/python3
+"""arcade-idle — the screen VM stops itself (tomblancdev.arcade, role screen).
+
+Idle means, for N minutes, all three at once:
+  * nothing streams out of the box   (tx bytes on the default interface below a floor per tick)
+  * no couch input                   (no event on any /dev/input/event*, pads included)
+  * no admin shell                   (no established connection to port 22)
+Then `systemctl poweroff`. One process, stdlib only, root (it reads the input
+devices). A device another process grabbed exclusively (Steam Input does,
+then exposes a virtual pad of its own) is silent here — the virtual one is
+read instead, and the stream heuristic covers remote players anyway.
+
+Usage: arcade-idle <minutes> [<tx-floor-bytes-per-tick>]
+"""
+import glob
+import os
+import select
+import subprocess
+import sys
+import time
+
+TICK = 30  # seconds between verdicts
+
+
+def log(msg):
+    print(f"arcade-idle: {msg}", flush=True)
+
+
+def default_iface():
+    try:
+        with open("/proc/net/route") as f:
+            for line in f.readlines()[1:]:
+                p = line.split()
+                if len(p) > 1 and p[1] == "00000000":
+                    return p[0]
+    except OSError:
+        pass
+    return None
+
+
+def tx_bytes(iface):
+    try:
+        with open(f"/sys/class/net/{iface}/statistics/tx_bytes") as f:
+            return int(f.read())
+    except (OSError, ValueError):
+        return 0
+
+
+def shells():
+    try:
+        out = subprocess.run(
+            ["ss", "-Htn", "state", "established", "( sport = :22 )"],
+            capture_output=True, text=True, timeout=10,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return 0
+    return len(out.strip().splitlines())
+
+
+def main():
+    minutes = int(sys.argv[1])
+    floor = int(sys.argv[2]) if len(sys.argv) > 2 else 2_000_000
+    if minutes <= 0:
+        log("disabled (0 min) — exiting")
+        return 0
+    iface = default_iface()
+    fds = {}  # /dev/input path -> fd
+    now = time.monotonic()
+    last = {"input": now, "stream": now, "shell": now}
+    last_tx = tx_bytes(iface) if iface else 0
+    ticks = 0
+    log(f"{minutes} min of idle -> poweroff; iface {iface}, stream floor {floor} B/{TICK}s")
+    while True:
+        for path in glob.glob("/dev/input/event*"):  # pads come and go
+            if path not in fds:
+                try:
+                    fds[path] = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+                except OSError:
+                    pass
+        deadline = time.monotonic() + TICK
+        while True:
+            timeout = deadline - time.monotonic()
+            if timeout <= 0:
+                break
+            try:
+                readable, _, _ = select.select(list(fds.values()), [], [], timeout)
+            except (OSError, ValueError):
+                readable = []
+                for path, fd in list(fds.items()):
+                    if not os.path.exists(path):
+                        os.close(fd)
+                        del fds[path]
+            for fd in readable:
+                try:
+                    os.read(fd, 4096)
+                    last["input"] = time.monotonic()
+                except OSError:  # the device went away
+                    for path, f in list(fds.items()):
+                        if f == fd:
+                            os.close(f)
+                            del fds[path]
+        now = time.monotonic()
+        if iface:
+            tx = tx_bytes(iface)
+            if tx - last_tx > floor:
+                last["stream"] = now
+            last_tx = tx
+        else:
+            iface = default_iface()
+        if shells():
+            last["shell"] = now
+        idle_for = now - max(last.values())
+        ticks += 1
+        if ticks % 10 == 0:  # a line every 5 min: what keeps the box up
+            ago = {k: int((now - v) / 60) for k, v in last.items()}
+            log(f"idle {int(idle_for / 60)} min (last input {ago['input']} min ago, stream {ago['stream']}, shell {ago['shell']})")
+        if idle_for >= minutes * 60:
+            log(f"idle for {int(idle_for / 60)} min — poweroff")
+            subprocess.run(["systemctl", "poweroff"], check=False)
+            time.sleep(TICK)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

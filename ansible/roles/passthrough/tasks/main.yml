@@ -1,0 +1,298 @@
+# passthrough — the node side of the screen brick. Order: read the devices
+# live → vfio + blacklist + cmdline (a reboot lands them) → vendor-reset
+# (DKMS, MOK-signed under Secure Boot, its udev rule) → the cluster mapping
+# + who may use it → the live verdict (reboot due / verified).
+---
+- name: Nothing to do on a node that carries no device
+  ansible.builtin.meta: end_host
+  when: arcade_passthrough_devices | length == 0
+
+# --- the devices, read live (every function: ids, subsystem, IOMMU group) ----
+- name: Read every function of every device — live, never from data
+  ansible.builtin.shell: |
+    set -e
+    for f in /sys/bus/pci/devices/{{ item.path }}.*; do
+      [ -e "$f/vendor" ] || continue
+      printf '%s %s:%s %s:%s %s\n' "$(basename "$f")" \
+        "$(cut -c3- "$f/vendor")" "$(cut -c3- "$f/device")" \
+        "$(cut -c3- "$f/subsystem_vendor")" "$(cut -c3- "$f/subsystem_device")" \
+        "$(basename "$(readlink "$f/iommu_group" || echo none)")"
+    done
+  args:
+    executable: /bin/bash
+  loop: "{{ arcade_passthrough_devices }}"
+  loop_control: { label: "{{ item.id }} ({{ item.path }})" }
+  register: arcade_passthrough_live
+  changed_when: false
+  check_mode: false
+
+- name: The devices, shaped
+  ansible.builtin.set_fact:
+    arcade_passthrough_found: >-
+      {%- set out = [] -%}
+      {%- for r in arcade_passthrough_live.results -%}
+      {%-   set fns = [] -%}
+      {%-   for l in r.stdout_lines -%}
+      {%-     set p = l.split() -%}
+      {%-     set _ = fns.append({'addr': p[0], 'id': p[1], 'subsystem': p[2], 'group': p[3]}) -%}
+      {%-   endfor -%}
+      {%-   set _ = out.append(r.item | combine({'functions': fns})) -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Every device exists and sits in an IOMMU group (IOMMU on in the firmware and the kernel)
+  ansible.builtin.assert:
+    that:
+      - arcade_passthrough_found | rejectattr('functions') | list | length == 0
+      - arcade_passthrough_found | map(attribute='functions') | flatten | map(attribute='group') | reject('match', '^[0-9]+$') | list | length == 0
+    fail_msg: "no function under /sys/bus/pci/devices or no iommu_group for {{ arcade_passthrough_found | map(attribute='id') | list }} — IOMMU off, wrong path?"
+    quiet: true
+
+- name: Facts the rest of the role uses
+  ansible.builtin.set_fact:
+    arcade_passthrough_ids: "{{ arcade_passthrough_found | map(attribute='functions') | flatten | map(attribute='id') | unique | list }}"
+    arcade_passthrough_functions: "{{ arcade_passthrough_found | map(attribute='functions') | flatten | list }}"
+    arcade_passthrough_vendor_reset: "{{ arcade_passthrough_found | selectattr('vendor_reset', 'defined') | selectattr('vendor_reset') | list | length > 0 }}"
+
+# --- vfio claims the cards at boot; the host driver never does ---------------
+- name: vfio-pci binds every function; the host drivers are blacklisted
+  ansible.builtin.template:
+    src: modprobe.conf.j2
+    dest: /etc/modprobe.d/arcade-passthrough.conf
+    mode: "0644"
+  register: arcade_passthrough_modprobe
+  notify:
+    - arcade passthrough initramfs
+    - arcade passthrough boot
+
+- name: The modules load at boot
+  ansible.builtin.template:
+    src: modules-load.conf.j2
+    dest: /etc/modules-load.d/arcade-passthrough.conf
+    mode: "0644"
+  register: arcade_passthrough_modules
+  notify:
+    - arcade passthrough initramfs
+    - arcade passthrough boot
+
+- name: Kernel command line — a GRUB drop-in (proxmox-boot-tool renders every ESP)
+  ansible.builtin.copy:
+    dest: /etc/default/grub.d/arcade-passthrough.cfg
+    content: |
+      # Managed by ansible (tomblancdev.arcade.passthrough)
+      GRUB_CMDLINE_LINUX="$GRUB_CMDLINE_LINUX {{ arcade_passthrough_cmdline }}"
+    mode: "0644"
+  register: arcade_passthrough_grub
+  notify: arcade passthrough boot
+
+# --- vendor-reset: the AMD reset bug (Polaris, Vega, Navi 10/14) -------------
+- name: Build tools, the default kernel's headers, mokutil (DKMS rebuilds at every kernel update)
+  ansible.builtin.apt:
+    name: [dkms, git, proxmox-default-headers, mokutil]
+    state: present
+  when: arcade_passthrough_vendor_reset
+
+- name: vendor-reset source, pinned
+  ansible.builtin.git:
+    repo: "{{ arcade_passthrough_vendor_reset_repo }}"
+    dest: "{{ arcade_passthrough_src }}/vendor-reset"
+    version: "{{ arcade_passthrough_vendor_reset_version }}"
+    force: true
+  register: arcade_passthrough_vr_src
+  when: arcade_passthrough_vendor_reset
+
+- name: Its DKMS version
+  ansible.builtin.shell: . {{ arcade_passthrough_src }}/vendor-reset/dkms.conf && echo "$PACKAGE_VERSION"
+  register: arcade_passthrough_vr_ver
+  changed_when: false
+  check_mode: false
+  when: arcade_passthrough_vendor_reset
+
+- name: The kernels with headers (DKMS builds for these — the running one may lack them until the next boot)
+  ansible.builtin.shell: for k in /lib/modules/*; do [ -e "$k/build" ] && basename "$k"; done; true
+  register: arcade_passthrough_kernels
+  changed_when: false
+  check_mode: false
+  when: arcade_passthrough_vendor_reset
+
+- name: vendor-reset as DKMS sees it
+  ansible.builtin.command: dkms status vendor-reset
+  register: arcade_passthrough_dkms
+  changed_when: false
+  check_mode: false
+  when: arcade_passthrough_vendor_reset
+
+- name: A new source revision replaces the old build
+  ansible.builtin.command: dkms remove vendor-reset/{{ arcade_passthrough_vr_ver.stdout }} --all
+  when:
+    - arcade_passthrough_vendor_reset
+    - arcade_passthrough_vr_src is changed
+    - arcade_passthrough_dkms.stdout != ''
+
+- name: Registered with DKMS
+  ansible.builtin.command: dkms add {{ arcade_passthrough_src }}/vendor-reset
+  when:
+    - arcade_passthrough_vendor_reset
+    - arcade_passthrough_vr_src is changed or ('vendor-reset/' ~ arcade_passthrough_vr_ver.stdout) not in arcade_passthrough_dkms.stdout
+
+- name: Built + installed for every kernel with headers (DKMS signs it with its MOK key under Secure Boot)
+  ansible.builtin.command: dkms install vendor-reset/{{ arcade_passthrough_vr_ver.stdout }} -k {{ item }}
+  loop: "{{ arcade_passthrough_kernels.stdout_lines | default([]) }}"
+  when:
+    - arcade_passthrough_vendor_reset
+    - arcade_passthrough_vr_src is changed or (arcade_passthrough_dkms.stdout_lines | select('search', ', ' ~ item ~ ', .*: installed') | list | length == 0)
+  register: arcade_passthrough_dkms_install
+  notify:
+    - arcade passthrough initramfs
+    - arcade passthrough boot
+
+- name: "The udev rule: vendor-reset loads on the device and its reset method becomes device_specific (kernel ≥ 5.15)"
+  ansible.builtin.copy:
+    remote_src: true
+    src: "{{ arcade_passthrough_src }}/vendor-reset/udev/99-vendor-reset.rules"
+    dest: /etc/udev/rules.d/99-vendor-reset.rules
+    mode: "0644"
+  when: arcade_passthrough_vendor_reset
+  notify: arcade passthrough udev
+
+- name: Secure Boot state
+  ansible.builtin.command: mokutil --sb-state
+  register: arcade_passthrough_sb
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: arcade_passthrough_vendor_reset
+
+- name: DKMS's MOK certificate — enrolled?
+  ansible.builtin.command: mokutil --test-key /var/lib/dkms/mok.pub
+  register: arcade_passthrough_mok
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: arcade_passthrough_vendor_reset and 'enabled' in (arcade_passthrough_sb.stdout | default(''))
+
+- name: — queued for the next boot?
+  ansible.builtin.command: mokutil --list-new
+  register: arcade_passthrough_mok_new
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: arcade_passthrough_vendor_reset and 'enabled' in (arcade_passthrough_sb.stdout | default(''))
+
+# MokManager takes over at the next boot: Enroll MOK -> Continue -> Yes ->
+# the root password (--root-pw: the hash from /etc/shadow, nothing typed here)
+- name: Queue the enrolment (the module loads only after the prompt at the screen)
+  ansible.builtin.command: mokutil --import /var/lib/dkms/mok.pub --root-pw
+  register: arcade_passthrough_mok_import
+  when:
+    - arcade_passthrough_vendor_reset
+    - "'enabled' in (arcade_passthrough_sb.stdout | default(''))"
+    - "'is not enrolled' in (arcade_passthrough_mok.stdout | default(''))"
+    - "'[key 1]' not in (arcade_passthrough_mok_new.stdout | default(''))"
+
+# --- the cluster PCI mapping: what a VM's hostpci line names -----------------
+- name: The mapping as the cluster has it
+  ansible.builtin.command: pvesh get /cluster/mapping/pci/{{ item.id }} --output-format json
+  loop: "{{ arcade_passthrough_found }}"
+  loop_control: { label: "{{ item.id }}" }
+  register: arcade_passthrough_map_live
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: "What it must say (one entry: this node, the device, the ids read live)"
+  ansible.builtin.set_fact:
+    arcade_passthrough_map: >-
+      {%- set out = [] -%}
+      {%- for r in arcade_passthrough_map_live.results -%}
+      {%-   set d = r.item -%}
+      {%-   set want = ['id=' ~ d.functions[0].id, 'iommugroup=' ~ d.functions[0].group, 'node=' ~ inventory_hostname, 'path=' ~ d.path, 'subsystem-id=' ~ d.functions[0].subsystem] -%}
+      {%-   set live = (r.stdout | from_json).map if r.rc == 0 else [] -%}
+      {%-   set ok = [] -%}
+      {%-   for e in live -%}{%- if (e.split(',') | sort) == (want | sort) -%}{%- set _ = ok.append(e) -%}{%- endif -%}{%- endfor -%}
+      {%-   set _ = out.append({'id': d.id, 'description': d.description | default(d.id), 'exists': r.rc == 0, 'entry': want | join(','), 'ok': ok | length == 1 and live | length == 1, 'use_by': d.use_by | default([])}) -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: The mapping (create or update)
+  ansible.builtin.command: >-
+    pvesh {{ 'set /cluster/mapping/pci/' ~ item.id if item.exists else 'create /cluster/mapping/pci --id ' ~ item.id }}
+    --description {{ item.description | quote }} --map {{ item.entry | quote }}
+  loop: "{{ arcade_passthrough_map }}"
+  loop_control: { label: "{{ item.id }}: {{ item.entry }}" }
+  when: not item.ok
+
+- name: The cluster's own check of the mapping against this node
+  ansible.builtin.command: pvesh get /cluster/mapping/pci --check-node {{ inventory_hostname }} --output-format json
+  register: arcade_passthrough_map_check
+  changed_when: false
+  check_mode: false
+
+- name: It passes (ids, IOMMU group, the device is where the mapping says)
+  ansible.builtin.assert:
+    that:
+      - (arcade_passthrough_map_check.stdout | from_json) | selectattr('id', 'in', arcade_passthrough_map | map(attribute='id') | list) | selectattr('checks', 'defined') | map(attribute='checks') | flatten | list | length == 0
+    fail_msg: "the cluster rejects a mapping on {{ inventory_hostname }}: {{ (arcade_passthrough_map_check.stdout | from_json) | selectattr('checks', 'defined') | map(attribute='checks') | flatten | list }}"
+    quiet: true
+  when: not ansible_check_mode
+
+- name: ACLs as the cluster has them
+  ansible.builtin.command: pveum acl list --output-format json
+  register: arcade_passthrough_acl
+  changed_when: false
+  check_mode: false
+
+- name: The provisioning identity may USE the mapping (PVEMappingUser on /mapping/pci/<id> — nothing wider)
+  ansible.builtin.command: pveum acl modify /mapping/pci/{{ item.0.id }} --users {{ item.1 }} --roles PVEMappingUser
+  loop: "{{ arcade_passthrough_map | subelements('use_by') }}"
+  loop_control: { label: "{{ item.1 }} -> /mapping/pci/{{ item.0.id }}" }
+  when: (arcade_passthrough_acl.stdout | from_json) | selectattr('path', 'equalto', '/mapping/pci/' ~ item.0.id) | selectattr('ugid', 'equalto', item.1) | selectattr('roleid', 'equalto', 'PVEMappingUser') | list | length == 0
+
+# --- the live verdict: reboot due, or verified ------------------------------
+- name: Flush (initramfs + ESPs rendered now, not at the end)
+  ansible.builtin.meta: flush_handlers
+
+- name: The running kernel's command line
+  ansible.builtin.command: cat /proc/cmdline
+  register: arcade_passthrough_cmdline_live
+  changed_when: false
+  check_mode: false
+
+- name: The driver on every function
+  ansible.builtin.shell: basename "$(readlink /sys/bus/pci/devices/{{ item.addr }}/driver 2>/dev/null || echo none)"
+  loop: "{{ arcade_passthrough_functions }}"
+  loop_control: { label: "{{ item.addr }}" }
+  register: arcade_passthrough_drivers
+  changed_when: false
+  check_mode: false
+
+- name: The reset method + the module, for the running kernel
+  ansible.builtin.shell: |
+    for d in {{ arcade_passthrough_found | map(attribute='functions') | map('first') | map(attribute='addr') | join(' ') }}; do
+      printf '%s %s\n' "$d" "$(cat /sys/bus/pci/devices/$d/reset_method 2>/dev/null || echo none)"
+    done
+    modinfo -n vendor-reset >/dev/null 2>&1 && echo "module present" || echo "module missing"
+  register: arcade_passthrough_reset_live
+  changed_when: false
+  check_mode: false
+  when: arcade_passthrough_vendor_reset
+
+- name: Where this node stands
+  ansible.builtin.set_fact:
+    arcade_passthrough_state:
+      cmdline_ok: "{{ arcade_passthrough_cmdline.split() | reject('in', arcade_passthrough_cmdline_live.stdout.split()) | list | length == 0 }}"
+      vfio_ok: "{{ arcade_passthrough_drivers.results | map(attribute='stdout') | reject('equalto', 'vfio-pci') | list | length == 0 }}"
+      reset_ok: "{{ (not arcade_passthrough_vendor_reset) or (arcade_passthrough_reset_live.stdout_lines | select('search', ' device_specific') | list | length == arcade_passthrough_found | length and 'module present' in arcade_passthrough_reset_live.stdout) }}"
+      mok_ok: "{{ (not arcade_passthrough_vendor_reset) or ('enabled' not in (arcade_passthrough_sb.stdout | default(''))) or ('is already enrolled' in (arcade_passthrough_mok.stdout | default(''))) }}"
+      changed_now: "{{ arcade_passthrough_modprobe is changed or arcade_passthrough_modules is changed or arcade_passthrough_grub is changed or arcade_passthrough_dkms_install is changed or arcade_passthrough_mok_import is changed }}"
+
+- name: "REBOOT DUE on {{ inventory_hostname }} (cmdline {{ arcade_passthrough_state.cmdline_ok }}, vfio {{ arcade_passthrough_state.vfio_ok }}, reset {{ arcade_passthrough_state.reset_ok }}, MOK {{ arcade_passthrough_state.mok_ok }}) — the node's own screen: MokManager first if a key is queued"
+  ansible.builtin.debug:
+    msg: "{{ arcade_passthrough_state }}"
+  changed_when: true
+  when: not (arcade_passthrough_state.cmdline_ok and arcade_passthrough_state.vfio_ok and arcade_passthrough_state.reset_ok and arcade_passthrough_state.mok_ok)
+
+- name: Verified — the node never touches the card, the mapping is usable
+  ansible.builtin.debug:
+    msg: "{{ arcade_passthrough_found | map(attribute='id') | list }}: vfio-pci on every function{{ ', reset_method device_specific, vendor-reset present' if arcade_passthrough_vendor_reset else '' }}, mapping checked by the cluster"
+  when: arcade_passthrough_state.cmdline_ok and arcade_passthrough_state.vfio_ok and arcade_passthrough_state.reset_ok and arcade_passthrough_state.mok_ok

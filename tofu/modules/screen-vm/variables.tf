@@ -56,3 +56,8 @@ variable "agent" {
   type        = bool
   default     = true
 }
+variable "on_boot" {
+  description = "start the VM when its node boots — a lab without a doorman (one WoL = the console); false once the doorman owns the wake"
+  type        = bool
+  default     = false
+}

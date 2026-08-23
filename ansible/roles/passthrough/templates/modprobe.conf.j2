@@ -1,0 +1,8 @@
+# Managed by ansible (tomblancdev.arcade.passthrough) — the cards VMs own.
+# vfio-pci claims every function at boot; the host drivers are blacklisted
+# and, should anything pull them in, ordered after vfio-pci.
+options vfio-pci ids={{ arcade_passthrough_ids | join(',') }} disable_vga=1
+{% for d in arcade_passthrough_blacklist %}
+blacklist {{ d }}
+softdep {{ d }} pre: vfio-pci
+{% endfor %}

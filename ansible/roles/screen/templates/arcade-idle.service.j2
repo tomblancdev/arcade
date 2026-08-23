@@ -1,0 +1,12 @@
+# Managed by ansible (tomblancdev.arcade.screen)
+[Unit]
+Description=arcade-idle — the console stops itself after {{ arcade_screen_idle_minutes }} min with no stream, no couch input, no admin shell
+After=multi-user.target
+
+[Service]
+ExecStart=/usr/local/bin/arcade-idle {{ arcade_screen_idle_minutes }} {{ arcade_screen_idle_tx_floor }}
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

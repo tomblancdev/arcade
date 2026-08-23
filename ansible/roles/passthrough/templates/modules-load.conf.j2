@@ -1,0 +1,8 @@
+# Managed by ansible (tomblancdev.arcade.passthrough)
+vfio
+vfio_iommu_type1
+vfio_pci
+{% if arcade_passthrough_vendor_reset %}
+# must be loaded before the kernel ever resets the card (gnif/vendor-reset README)
+vendor-reset
+{% endif %}

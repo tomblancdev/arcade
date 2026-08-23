@@ -1,0 +1,28 @@
+# passthrough — the node that carries a card a VM owns. Runs ON the Proxmox
+# node (become root). The node never drives the card: vfio-pci claims it at
+# boot, the host driver is blacklisted, vendor-reset (when asked) gives the
+# kernel a reset sequence the card honours, the cluster PCI mapping names
+# the device for a VM's `hostpci: mapping=<id>` line, and the provisioning
+# identity may USE exactly that mapping — nothing wider. Idempotent; a
+# reboot is REPORTED (cmdline, initramfs, the MOK prompt), never performed.
+arcade_passthrough_devices: []
+#  - id: rx5700xt                 # the cluster mapping's name (what a VM's hostpci line refers to)
+#    node: muscle1                # the node that carries the card (this host)
+#    path: "0000:09:00"           # the PCI device — every function (video + HDMI audio)
+#    description: "RX 5700 XT"    # shown in the PVE UI
+#    vendor_reset: true           # Polaris / Vega / Navi 10-14: the AMD reset bug (gnif/vendor-reset)
+#    use_by: [automation@pve]     # PVE users allowed to USE the mapping (PVEMappingUser on /mapping/pci/<id>)
+
+# kernel command line, as a GRUB drop-in (proxmox-boot-tool in grub mode —
+# PVE's Secure Boot default since 8.1): IOMMU pass-through mode; no firmware
+# framebuffer on the card (the card that POSTed the box keeps its BAR busy
+# otherwise and vfio-pci cannot claim it — the node's own screen goes dark
+# once the kernel runs; firmware, GRUB and MokManager still show on it).
+# Intel boards add `intel_iommu=on`.
+arcade_passthrough_cmdline: "iommu=pt initcall_blacklist=sysfb_init"
+# host drivers that must never claim a passed-through card
+arcade_passthrough_blacklist: [amdgpu, radeon]
+# gnif/vendor-reset, pinned to a commit — a lab bumps it on purpose
+arcade_passthrough_vendor_reset_repo: https://github.com/gnif/vendor-reset.git
+arcade_passthrough_vendor_reset_version: cbb4dd50926337e0f9fe1dd1e8a74aa5cb3448a7   # 2026-06-29 (0.1.1 + the 6.12+ include fix, the 731f udev rule)
+arcade_passthrough_src: /usr/local/src/arcade

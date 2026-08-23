@@ -1,5 +1,61 @@
+# retrodeck — one Flatpak on the live mount. The first run is a wizard at
+# the screen (it asks where RetroDECK lives: the home below); everything
+# else — the package, the sandbox's reach, the ROM link, the config's path —
+# is here and kept.
 ---
-# retrodeck — the emulation front: RetroDECK Flatpak on the live mount, ROMs from the library
-# Lands at G1 (the platform's build plan). The contract is in defaults/main.yml;
-# installing the collection before the role exists is the point: the pin and
-# the data land first, the tasks fill in at their gate.
+- name: Flathub (system) present
+  community.general.flatpak_remote:
+    name: "{{ arcade_retrodeck_remote }}"
+    flatpakrepo_url: https://dl.flathub.org/repo/flathub.flatpakrepo
+    method: system
+    state: present
+
+- name: RetroDECK — one Flatpak, system-wide
+  community.general.flatpak:
+    name: "{{ arcade_retrodeck_flatpak }}"
+    remote: "{{ arcade_retrodeck_remote }}"
+    method: system
+    state: present
+
+- name: The sandbox reaches its home and the ROMs (a system override, not per user)
+  ansible.builtin.command: flatpak override --system --show {{ arcade_retrodeck_flatpak }}
+  register: arcade_retrodeck_override
+  changed_when: false
+  check_mode: false
+
+- name: — granted
+  ansible.builtin.command: flatpak override --system {{ arcade_retrodeck_flatpak }} --filesystem={{ arcade_retrodeck_home }} --filesystem={{ arcade_retrodeck_roms }}
+  when: arcade_retrodeck_home not in arcade_retrodeck_override.stdout or arcade_retrodeck_roms not in arcade_retrodeck_override.stdout
+
+- name: The home is there (the live mount), owned by the player's user
+  ansible.builtin.file:
+    path: "{{ arcade_retrodeck_home }}"
+    state: directory
+    owner: "{{ arcade_retrodeck_user }}"
+    group: "{{ arcade_retrodeck_user }}"
+
+- name: <home>/roms -> the library's local copy
+  ansible.builtin.file:
+    src: "{{ arcade_retrodeck_roms }}"
+    dest: "{{ arcade_retrodeck_home }}/roms"
+    state: link
+    force: true
+    owner: "{{ arcade_retrodeck_user }}"
+    group: "{{ arcade_retrodeck_user }}"
+
+- name: Its config (written by the first-run wizard at the screen)
+  ansible.builtin.stat:
+    path: "/var/home/{{ arcade_retrodeck_user }}/.var/app/{{ arcade_retrodeck_flatpak }}/config/retrodeck/retrodeck.cfg"
+  register: arcade_retrodeck_cfg
+
+- name: — keeps pointing at the home
+  ansible.builtin.lineinfile:
+    path: "{{ arcade_retrodeck_cfg.stat.path }}"
+    regexp: "^rdhome="
+    line: "rdhome={{ arcade_retrodeck_home }}"
+  when: arcade_retrodeck_cfg.stat.exists
+
+- name: — or the wizard is still due
+  ansible.builtin.debug:
+    msg: "first run pending: launch RetroDECK at the screen, choose a custom location: {{ arcade_retrodeck_home }} (then add RetroDECK to Steam from its Configurator)"
+  when: not arcade_retrodeck_cfg.stat.exists

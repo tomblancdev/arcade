@@ -1,0 +1,15 @@
+# Managed by ansible (tomblancdev.arcade.sunshine) — a user unit of {{ arcade_sunshine_user }}
+[Unit]
+Description=arcade-sunshine — the stream (Sunshine, brew package: KMS capture of the couch session)
+After=graphical-session.target
+StartLimitIntervalSec=0
+
+[Service]
+# the session (gamescope/Steam, pipewire) comes up a few seconds after the manager
+ExecStartPre=/bin/sleep 5
+ExecStart={{ arcade_sunshine_brew | dirname }}/sunshine
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

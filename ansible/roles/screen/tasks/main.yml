@@ -1,5 +1,185 @@
+# screen — the GPU-owner VM after its install runbook. Order: the OS is the
+# one expected → hostname → the automation lane (key-only) → the static
+# address kept → the data (NFS, one mount per service) → idle watchdog →
+# the shipper. Nothing here installs a game or a stream: those are roles.
 ---
-# screen — the GPU-owner VM after its appliance install: user, address, mounts, idle timer, shipper
-# Lands at G1 (the platform's build plan). The contract is in defaults/main.yml;
-# installing the collection before the role exists is the point: the pin and
-# the data land first, the tasks fill in at their gate.
+- name: A Fedora Atomic guest (bootc/ostree) — the install runbook happened
+  ansible.builtin.stat:
+    path: /run/ostree-booted
+  register: arcade_screen_ostree
+
+- name: Refuse anything else
+  ansible.builtin.assert:
+    that:
+      - arcade_screen_ostree.stat.exists
+      - ansible_facts.os_family == 'RedHat'
+    fail_msg: "the screen role expects a Fedora Atomic image (Bazzite) — install it from the ISO first (the runbook)"
+    quiet: true
+
+- name: Hostname
+  ansible.builtin.hostname:
+    name: "{{ arcade_screen_hostname }}"
+
+# --- the automation lane -----------------------------------------------------
+- name: The admin user — in wheel, its password locked (the key is the door)
+  ansible.builtin.user:
+    name: "{{ arcade_screen_admin_user }}"
+    groups: [wheel]
+    append: true
+    password_lock: true
+
+- name: sudo without a password for it
+  ansible.builtin.copy:
+    dest: "/etc/sudoers.d/{{ arcade_screen_admin_user }}"
+    content: "{{ arcade_screen_admin_user }} ALL=(ALL) NOPASSWD: ALL\n"
+    mode: "0440"
+    validate: /usr/sbin/visudo -cf %s
+
+- name: sshd — keys only, no root
+  ansible.builtin.copy:
+    dest: /etc/ssh/sshd_config.d/50-arcade.conf
+    content: |
+      # Managed by ansible (tomblancdev.arcade.screen)
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      PermitRootLogin no
+    mode: "0600"
+  notify: arcade screen sshd
+
+- name: sshd enabled (the runbook switched it on by hand; kept)
+  ansible.builtin.service:
+    name: sshd
+    enabled: true
+    state: started
+
+# --- the static address: born at the install, kept here ---------------------
+- name: The active wired connection profile
+  ansible.builtin.shell: >-
+    nmcli -t -f NAME,DEVICE,TYPE connection show --active | awk -F: '$3 == "802-3-ethernet" {print $1; exit}'
+  register: arcade_screen_con
+  changed_when: false
+  check_mode: false
+
+- name: The profile says what the data says (manual address, gateway, resolvers)
+  community.general.nmcli:
+    conn_name: "{{ arcade_screen_con.stdout }}"
+    ifname: "{{ ansible_facts.default_ipv4.interface }}"
+    type: ethernet
+    method4: manual
+    ip4: "{{ arcade_screen_address }}"
+    gw4: "{{ arcade_screen_gateway }}"
+    dns4: "{{ arcade_screen_dns }}"
+    state: present
+  when: arcade_screen_address != '' and arcade_screen_con.stdout != ''
+
+# --- the data: NFS from the tank, one mount per service ----------------------
+- name: nfs-utils in the image?
+  ansible.builtin.command: rpm -q nfs-utils
+  register: arcade_screen_nfs_pkg
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: nfs-utils layered (the image lacks it) — lands at the next boot
+  community.general.rpm_ostree_pkg:
+    name: nfs-utils
+    state: present
+  register: arcade_screen_layer
+  when: arcade_screen_nfs_pkg.rc != 0 and arcade_screen_mounts | length > 0
+
+- name: Reboot to land the layer
+  ansible.builtin.reboot:
+    reboot_timeout: 600
+  when: arcade_screen_layer is changed
+
+- name: /srv — one directory per service
+  ansible.builtin.file:
+    path: /srv/screen
+    state: directory
+    mode: "0755"
+
+- name: Mount points + the cache, owned by the player's user
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ arcade_screen_user }}"
+    group: "{{ arcade_screen_user }}"
+    mode: "0755"
+  loop: "{{ (arcade_screen_mounts | map(attribute='path') | list) + [arcade_screen_cache] }}"
+
+- name: The mounts (fstab + mounted now)
+  ansible.posix.mount:
+    src: "{{ item.src }}"
+    path: "{{ item.path }}"
+    fstype: nfs4
+    opts: "{{ arcade_screen_mount_options[item.mode] }}"
+    state: mounted
+  loop: "{{ arcade_screen_mounts }}"
+  loop_control: { label: "{{ item.path }} ({{ item.mode }}: {{ item.src }})" }
+
+# --- idle -> poweroff --------------------------------------------------------
+- name: "The idle watchdog (stdlib python, root: it reads the input devices)"
+  ansible.builtin.copy:
+    src: arcade-idle
+    dest: /usr/local/bin/arcade-idle
+    mode: "0755"
+  notify: arcade screen idle
+
+- name: Its unit
+  ansible.builtin.template:
+    src: arcade-idle.service.j2
+    dest: /etc/systemd/system/arcade-idle.service
+    mode: "0644"
+  notify: arcade screen idle
+
+- name: Enabled and running (stopped when idle_minutes = 0)
+  ansible.builtin.systemd:
+    name: arcade-idle
+    enabled: "{{ arcade_screen_idle_minutes | int > 0 }}"
+    state: "{{ 'started' if arcade_screen_idle_minutes | int > 0 else 'stopped' }}"
+    daemon_reload: true
+
+# --- the shipper: alloy as a container (journald + node metrics -> the aggregator) ---
+- name: Shipper dirs
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop: [/etc/arcade/alloy, /var/lib/arcade/alloy]
+  when: arcade_screen_loki_url != ''
+
+- name: Alloy config
+  ansible.builtin.template:
+    src: config.alloy.j2
+    dest: /etc/arcade/alloy/config.alloy
+    mode: "0644"
+  notify: arcade screen alloy
+  when: arcade_screen_loki_url != ''
+
+- name: "The Quadlet (podman runs it as a system unit: arcade-alloy.service)"
+  ansible.builtin.template:
+    src: arcade-alloy.container.j2
+    dest: /etc/containers/systemd/arcade-alloy.container
+    mode: "0644"
+  notify: arcade screen alloy
+  when: arcade_screen_loki_url != ''
+
+- name: "Running (a generated unit: no enable, the [Install] section is the enable)"
+  ansible.builtin.systemd:
+    name: arcade-alloy
+    state: started
+    daemon_reload: true
+  when: arcade_screen_loki_url != ''
+
+- name: Flush (config live before the health check)
+  ansible.builtin.meta: flush_handlers
+
+- name: Health — alloy ready (the first start pulls the image)
+  ansible.builtin.uri:
+    url: http://127.0.0.1:12345/-/ready
+  register: arcade_screen_alloy_ready
+  retries: 30
+  delay: 5
+  until: arcade_screen_alloy_ready.status == 200
+  changed_when: false
+  when: arcade_screen_loki_url != '' and not ansible_check_mode

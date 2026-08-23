@@ -1,20 +1,35 @@
----
-# screen — the GPU-owner VM (Bazzite: Fedora Atomic, rpm-ostree) after its
-# install runbook. Everything a lab sets; nothing here is a secret.
-arcade_screen_user: deck               # the VM's interactive user (uid 1000 on Bazzite)
-arcade_screen_address: ""              # static IPv4 (cidr), e.g. 10.10.50.21/24 — set by NetworkManager
+# screen — the GPU-owner VM (Bazzite: Fedora Atomic, bootc) after its install
+# runbook. Everything a lab sets; nothing here is a secret.
+arcade_screen_user: deck               # the VM's interactive user (uid 1000 on Bazzite: Gaming Mode autologin)
+arcade_screen_hostname: console
+arcade_screen_address: ""              # static IPv4 (cidr), e.g. 10.10.50.21/24 — born at the install, kept here (NetworkManager)
 arcade_screen_gateway: ""
 arcade_screen_dns: []                  # resolvers (the lab's pair)
-arcade_screen_hostname: console
+# the automation lane: the user ansible connects as — sudo without a
+# password, key-only once this role has run (the install runbook created it
+# with a password, locked here; the key landed with ssh-copy-id)
+arcade_screen_admin_user: "{{ ansible_user | default('ansible') }}"
 # mounts: the data bricks, by mode. `live` = used in place (saves, config);
-# `sync-at-wake` = mounted then rsync'd to arcade_screen_cache at every boot
-# (the VM plays from the copy and survives the server being down)
+# `sync-at-wake` = mounted read-only, copied to arcade_screen_cache at every
+# boot by the library role (the VM plays from the copy and survives the
+# server being down). Soft mounts on purpose: a dead server returns an error
+# to the game instead of hanging the console (and its idle timer).
 arcade_screen_mounts: []
-#  - { src: "10.10.10.12:/tank/games/console", path: /srv/screen/retrodeck, mode: live,         fstype: nfs4, options: "soft,timeo=30,retrans=3,_netdev" }
-#  - { src: "10.10.10.12:/tank/games/roms",    path: /srv/roms,             mode: sync-at-wake, fstype: nfs4, options: "ro,soft,_netdev" }
-arcade_screen_cache: /srv/roms-cache    # where sync-at-wake mounts are copied
-# idle → the VM stops itself (no Sunshine session, no couch input for N min)
+#  - { src: "10.10.10.12:/tank/games/console", path: /srv/screen/retrodeck, mode: live }
+#  - { src: "10.10.10.12:/tank/games/roms",    path: /srv/roms,             mode: sync-at-wake }
+arcade_screen_mount_options:
+  live: "rw,vers=4.2,soft,timeo=30,retrans=3,_netdev,nofail"
+  sync-at-wake: "ro,vers=4.2,soft,timeo=30,retrans=3,_netdev,nofail"
+arcade_screen_cache: /srv/roms-cache    # where sync-at-wake mounts are copied (the library role)
+# idle → the VM stops itself: N minutes with no stream leaving the box, no
+# couch input, no admin shell (the platform's wake/sleep design). 0 = never.
 arcade_screen_idle_minutes: 20
-# the log/metrics shipper (alloy as a container on an immutable OS)
-arcade_screen_loki_url: ""             # e.g. http://10.10.20.35:3100
-arcade_screen_prometheus_url: ""       # e.g. http://10.10.20.35:9090
+arcade_screen_idle_tx_floor: 2000000    # bytes per 30 s below which nothing is streaming (a Moonlight stream is tens of MB)
+# the log/metrics shipper: Grafana Alloy as a container (an immutable OS
+# layers nothing) — journald + node metrics (the card's hwmon too) pushed to
+# the aggregator. Empty = no shipper.
+arcade_screen_loki_url: ""             # e.g. http://10.10.20.35:3100/loki/api/v1/push
+arcade_screen_prometheus_url: ""       # e.g. http://10.10.20.35:9090/api/v1/write
+arcade_screen_alloy_image: docker.io/grafana/alloy:v1.18.1
+arcade_screen_security_units: [sshd.service]   # streams labelled security="auth" (a lab's retention/burst rules)
+arcade_screen_security_idents: [sudo, su]

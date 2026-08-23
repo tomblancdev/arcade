@@ -14,7 +14,8 @@ module "console" {
   gpu_mapping = "rx5700xt"
   bridge      = "games"
   iso         = proxmox_virtual_environment_download_file.bazzite.id   # the runbook, once
+  on_boot     = true   # until a doorman owns the wake (v0.2.0)
 }
 ```
 
-**Lands at G1** (validated in CI; first applied with the console).
+**Applied at G1** (2026-08-23): VM 5001 `console` on muscle1, the RX 5700 XT through the mapping `rx5700xt` (created by the `passthrough` role).
