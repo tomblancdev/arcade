@@ -1,0 +1,18 @@
+#!/bin/sh
+# arcade-session — Sunshine's global_prep_cmd hook: `do` at the start of a
+# stream, `undo` at its end. All it does is leave a marker, so that anything
+# asking "is somebody playing?" gets an exact answer instead of guessing from
+# network counters.
+#
+# The guess it replaces was tx bytes >= 2 MB/30 s plus evdev, which called a
+# live session idle twice in one evening.
+set -eu
+MARK=${ARCADE_SESSION_MARK:-/run/arcade/session}
+case "${1:-}" in
+	start) mkdir -p "$(dirname "$MARK")" 2>/dev/null || true
+	       : > "$MARK"
+	       logger -t arcade-session "stream started (${SUNSHINE_CLIENT_NAME:-a client})" 2>/dev/null || true ;;
+	stop)  rm -f "$MARK"
+	       logger -t arcade-session "stream ended" 2>/dev/null || true ;;
+	*)     echo "arcade-session: start | stop" >&2; exit 2 ;;
+esac

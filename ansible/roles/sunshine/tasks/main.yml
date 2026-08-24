@@ -141,6 +141,31 @@
     owner: "{{ arcade_sunshine_user }}"
     group: "{{ arcade_sunshine_user }}"
 
+# --- the session marker: an EXACT answer to "is somebody playing?" ---------
+# Sunshine runs global_prep_cmd at the start and the end of every stream, so
+# the marker is the truth rather than a guess at it. `arcade-idle` and any
+# reporter read `arcade-active` instead of counting bytes.
+- name: The session helpers (the prep hook + the activity check)
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "{{ arcade_sunshine_helper_dir }}/{{ item }}"
+    mode: "0755"
+  loop: [arcade-session, arcade-active]
+
+- name: The marker's directory survives a reboot (tmpfiles.d — /run is tmpfs)
+  ansible.builtin.copy:
+    content: |
+      # {{ ansible_managed }} — Sunshine's session marker (role sunshine).
+      d {{ arcade_sunshine_session_dir }} 0755 {{ arcade_sunshine_user }} {{ arcade_sunshine_user }} -
+    dest: /etc/tmpfiles.d/arcade-session.conf
+    mode: "0644"
+  register: arcade_session_tmpfiles
+
+- name: Create it now (so the first stream after a converge has somewhere to write)
+  ansible.builtin.command: systemd-tmpfiles --create /etc/tmpfiles.d/arcade-session.conf
+  when: arcade_session_tmpfiles is changed
+  changed_when: true
+
 - name: sunshine.conf — the keys the lab sets
   ansible.builtin.lineinfile:
     path: "{{ arcade_sunshine_home }}/sunshine.conf"
@@ -150,7 +175,7 @@
     owner: "{{ arcade_sunshine_user }}"
     group: "{{ arcade_sunshine_user }}"
     mode: "0600"
-  loop: "{{ (arcade_sunshine_config | combine({'channels': arcade_sunshine_channels, 'port': arcade_sunshine_port_base, 'sunshine_name': arcade_sunshine_name}) | combine({'encoder': arcade_sunshine_encoder} if arcade_sunshine_encoder != '' else {})) | dict2items }}"
+  loop: "{{ (arcade_sunshine_config | combine({'channels': arcade_sunshine_channels, 'port': arcade_sunshine_port_base, 'sunshine_name': arcade_sunshine_name, 'global_prep_cmd': arcade_sunshine_prep_cmd}) | combine({'encoder': arcade_sunshine_encoder} if arcade_sunshine_encoder != '' else {})) | dict2items }}"
   loop_control: { label: "{{ item.key }}" }
   notify: arcade sunshine restart
 

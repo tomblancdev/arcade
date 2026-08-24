@@ -1,12 +1,20 @@
 #!/usr/bin/python3
 """arcade-idle — the screen VM stops itself (tomblancdev.arcade, role screen).
 
-Idle means, for N minutes, all three at once:
+Idle means, for N minutes, all of these at once:
+  * `arcade-active` says nobody is on it, when that helper exists — the
+    EXACT signal (Sunshine's own session marker via global_prep_cmd). It
+    replaced a guess that called a live session idle twice in one evening.
   * nothing streams out of the box   (tx bytes on the default interface below a floor per tick)
   * no couch input                   (no event on any /dev/input/event*, pads included)
   * no admin shell                   (no established connection to port 22)
-Then `systemctl poweroff`. One process, stdlib only, root (it reads the input
-devices). A device another process grabbed exclusively (Steam Input does,
+
+Since Le Veilleur (docs/power.md) owns the wake/sleep decision, this timer is
+a BACKSTOP for the day the watchman is dead — hence a long N. It must never
+be the thing that ends a session.
+
+After N idle minutes: `systemctl poweroff`. One process, stdlib only, root
+(it reads the input devices). A device another process grabbed exclusively (Steam Input does,
 then exposes a virtual pad of its own) is silent here — the virtual one is
 read instead, and the stream heuristic covers remote players anyway.
 
@@ -46,6 +54,19 @@ def tx_bytes(iface):
         return 0
 
 
+ACTIVE_HELPER = "/usr/local/bin/arcade-active"
+
+
+def session():
+    """The exact answer, when the helper is installed: exit 0 = in use."""
+    if not os.path.exists(ACTIVE_HELPER):
+        return False
+    try:
+        return subprocess.run([ACTIVE_HELPER], timeout=10).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
 def shells():
     try:
         out = subprocess.run(
@@ -66,10 +87,11 @@ def main():
     iface = default_iface()
     fds = {}  # /dev/input path -> fd
     now = time.monotonic()
-    last = {"input": now, "stream": now, "shell": now}
+    last = {"input": now, "stream": now, "shell": now, "session": now}
     last_tx = tx_bytes(iface) if iface else 0
     ticks = 0
-    log(f"{minutes} min of idle -> poweroff; iface {iface}, stream floor {floor} B/{TICK}s")
+    exact = "yes" if os.path.exists(ACTIVE_HELPER) else "no (falling back to the tx-bytes guess)"
+    log(f"{minutes} min of idle -> poweroff (BACKSTOP; Le Veilleur decides first); iface {iface}, stream floor {floor} B/{TICK}s, exact session signal: {exact}")
     while True:
         for path in glob.glob("/dev/input/event*"):  # pads come and go
             if path not in fds:
@@ -109,11 +131,13 @@ def main():
             iface = default_iface()
         if shells():
             last["shell"] = now
+        if session():
+            last["session"] = now
         idle_for = now - max(last.values())
         ticks += 1
         if ticks % 10 == 0:  # a line every 5 min: what keeps the box up
             ago = {k: int((now - v) / 60) for k, v in last.items()}
-            log(f"idle {int(idle_for / 60)} min (last input {ago['input']} min ago, stream {ago['stream']}, shell {ago['shell']})")
+            log(f"idle {int(idle_for / 60)} min (last input {ago['input']} min ago, stream {ago['stream']}, shell {ago['shell']}, session {ago['session']})")
         if idle_for >= minutes * 60:
             log(f"idle for {int(idle_for / 60)} min — poweroff")
             subprocess.run(["systemctl", "poweroff"], check=False)

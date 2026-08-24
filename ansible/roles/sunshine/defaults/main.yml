@@ -24,6 +24,17 @@ arcade_sunshine_admin_password: ""
 # vaapi uses the dedicated VCN hardware encoder (arcade G1, 2026-08-23).
 arcade_sunshine_encoder: ""
 # sunshine.conf keys the lab sets; the rest stay upstream's defaults
+# where the session marker lives (tmpfs, so it cannot survive a reboot and
+# claim a session that is not there). The dir is created by tmpfiles.d, owned
+# by the Sunshine user, because global_prep_cmd runs as that user.
+arcade_sunshine_session_dir: /run/arcade
+arcade_sunshine_session_mark: /run/arcade/session
+arcade_sunshine_helper_dir: /usr/local/bin
+# Sunshine's own session hook (JSON in sunshine.conf): `do` at stream start,
+# `undo` at stream end. This is what makes "is somebody playing?" exact.
+arcade_sunshine_prep_cmd: >-
+  [{"do":"{{ arcade_sunshine_helper_dir }}/arcade-session start","undo":"{{ arcade_sunshine_helper_dir }}/arcade-session stop"}]
+
 arcade_sunshine_config:
   capture: kms                         # Gaming Mode (gamescope) is captured through KMS
   system_tray: disabled
