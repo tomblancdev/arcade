@@ -4,7 +4,13 @@
 # It answers, it does not decide: whoever asks (a reporter, a watchdog) owns
 # what to do about the answer. Two signals, both exact:
 #   * a Sunshine stream is live      (the global_prep_cmd marker)
-#   * somebody is on it over ssh     (an established session on :22)
+#   * a HUMAN is on it over ssh      (a `who` line with a pts/tty)
+#
+# "a human" matters: ansible registers in utmp WITHOUT a tty, so a converge
+# does not count as somebody using the box. Counting every ssh session
+# instead left a 20-minute tail after every converge, during which nothing
+# could go to sleep. squat-sleep learned the same distinction on 2026-08-24;
+# this is the same rule, in the same house.
 #
 # Known gap: a player sitting at the tower with pads plugged into it (couch
 # mode B) is NOT a Sunshine stream and is not seen here. Mode B needs the
@@ -13,5 +19,5 @@
 set -u
 MARK=${ARCADE_SESSION_MARK:-/run/arcade/session}
 [ -e "$MARK" ] && exit 0
-[ "$(ss -Htn state established '( sport = :22 )' 2>/dev/null | wc -l)" -gt 0 ] && exit 0
+[ -n "$(who 2>/dev/null | awk '$2 ~ /^(pts|tty)/')" ] && exit 0
 exit 1
