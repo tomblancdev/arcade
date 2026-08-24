@@ -4,13 +4,21 @@
 # It answers, it does not decide: whoever asks (a reporter, a watchdog) owns
 # what to do about the answer. Two signals, both exact:
 #   * a Sunshine stream is live      (the global_prep_cmd marker)
-#   * a HUMAN is on it over ssh      (a `who` line with a pts/tty)
+#   * a HUMAN has a shell on it      (a `who` line on a **pts**)
 #
-# "a human" matters: ansible registers in utmp WITHOUT a tty, so a converge
-# does not count as somebody using the box. Counting every ssh session
-# instead left a 20-minute tail after every converge, during which nothing
-# could go to sleep. squat-sleep learned the same distinction on 2026-08-24;
-# this is the same rule, in the same house.
+# `pts` and nothing else, and both halves of that matter:
+#   * ansible registers in utmp with the tty field "sshd", never a pts, so a
+#     converge does not read as somebody using the box (that mistake left a
+#     20-minute tail after every converge);
+#   * this box AUTO-LOGS-IN `deck` on **tty1** and seat0 for Gaming Mode, at
+#     every boot, forever. Matching `tty*` — the rule squat-sleep uses on the
+#     headless NODES, where a tty1 login really is a person — made this
+#     script answer IN USE permanently, so the console could never go idle
+#     and would have held the tower awake for good. A borrowed rule has to be
+#     re-checked against the machine it is borrowed onto.
+#
+# Couch mode B (pads plugged into the tower, no Sunshine stream) is still not
+# seen here — that needs the evdev signal, and the EDID emulator first.
 #
 # Known gap: a player sitting at the tower with pads plugged into it (couch
 # mode B) is NOT a Sunshine stream and is not seen here. Mode B needs the
@@ -19,5 +27,5 @@
 set -u
 MARK=${ARCADE_SESSION_MARK:-/run/arcade/session}
 [ -e "$MARK" ] && exit 0
-[ -n "$(who 2>/dev/null | awk '$2 ~ /^(pts|tty)/')" ] && exit 0
+[ -n "$(who 2>/dev/null | awk '$2 ~ /^pts/')" ] && exit 0
 exit 1
