@@ -155,7 +155,9 @@
 - name: The marker's directory survives a reboot (tmpfiles.d — /run is tmpfs)
   ansible.builtin.copy:
     content: |
-      # {{ ansible_managed }} — Sunshine's session marker (role sunshine).
+      # Ansible managed (tomblancdev.arcade, role sunshine) — Sunshine's
+      # session marker. /run is tmpfs, so the directory is recreated at every
+      # boot and a marker can never outlive the session that made it.
       d {{ arcade_sunshine_session_dir }} 0755 {{ arcade_sunshine_user }} {{ arcade_sunshine_user }} -
     dest: /etc/tmpfiles.d/arcade-session.conf
     mode: "0644"
