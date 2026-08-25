@@ -57,7 +57,7 @@ variable "agent" {
   default     = true
 }
 variable "on_boot" {
-  description = "start the VM when its node boots — a lab without a doorman (one WoL = the console); false once the doorman owns the wake"
+  description = "start the VM when its node boots — one WoL = the console. false once Le Veilleur owns the wake, which it does since 2026-08-25"
   type        = bool
   default     = false
 }

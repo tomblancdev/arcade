@@ -4,7 +4,7 @@ The GPU-owner VM: OVMF + q35, host CPU, no ballooning, the GPU through a
 **cluster PCI resource mapping** as the primary display (`x-vga`, no emulated
 VGA), one NIC on a named bridge with the hypervisor firewall on, an optional
 install ISO on `ide2`. tofu never starts or stops it (`started` ignored):
-the doorman wakes it, the idle timer stops it.
+Le Veilleur wakes it and stops it.
 
 ```hcl
 module "console" {
@@ -14,7 +14,7 @@ module "console" {
   gpu_mapping = "rx5700xt"
   bridge      = "games"
   iso         = proxmox_virtual_environment_download_file.bazzite.id   # the runbook, once
-  on_boot     = true   # until a doorman owns the wake (v0.2.0)
+  on_boot     = false  # Le Veilleur owns the wake
 }
 ```
 

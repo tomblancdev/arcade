@@ -5,8 +5,9 @@
 **A home games platform as bricks, not a box.** One VM owns the GPU and is
 *the screen* (Bazzite: the couch on HDMI, Sunshine for every other screen);
 emulation and stores run inside it; dedicated game servers are one container
-each in a small VM; a 24/7 **doorman** wakes the whole thing on a knock, shows
-the play page and relays Moonlight to friends outside. A project — the
+each in a small VM; a 24/7 panel ([Dejarik](https://github.com/tomblancdev/dejarik))
+is where a person presses play, and the wake itself belongs to
+[Le Veilleur](https://github.com/tomblancdev/veilleur). A project — the
 console, a Minecraft server, a remote desktop for a relative — *picks bricks*
 and is a few lines of data.
 
@@ -18,17 +19,23 @@ GPU:
 
 | Part | What | Where |
 |---|---|---|
-| the collection `tomblancdev.arcade` | roles `screen` · `sunshine` · `retrodeck` · `library` · `servers` · `doorman` — data in, facts out | [`ansible/`](ansible) |
-| the tofu modules | `screen-vm` (the GPU owner), `servers-vm`, `doorman-ct` — bpg/proxmox | [`tofu/modules/`](tofu/modules) |
-| the doorman | a Go app, one static binary, `ghcr.io/tomblancdev/arcade` — knock → wake, the play page, the Sunshine relay, the pairing-PIN relay, metrics | [`cmd/arcade`](cmd/arcade), [`deploy/quadlet`](deploy/quadlet) |
+| the collection `tomblancdev.arcade` | roles `passthrough` · `screen` · `sunshine` · `retrodeck` · `library` · `servers` — data in, facts out | [`ansible/`](ansible) |
+| the tofu modules | `screen-vm` (the GPU owner), `servers-vm` — bpg/proxmox | [`tofu/modules/`](tofu/modules) |
+
+**This repo is the platform, not the apps.** The panel a person opens to
+play is its own product — [Dejarik](https://github.com/tomblancdev/dejarik)
+— and the wake/sleep decision is another,
+[Le Veilleur](https://github.com/tomblancdev/veilleur). What lives here is
+what *builds and converges the machines*: no Go, no image, no runtime.
 
 ## How it is meant to work
 
 ```
-friend's Moonlight ──(a lease from Le Videur)──▶ doorman ──relay──▶ console VM (Sunshine, channels = one pad each)
-house TV / phone ───────────────────────────────────────────────▶ console VM (LAN)
-        a knock anywhere ──▶ doorman ──ssh, one forced command──▶ hypervisor: wake · start 5001 · stop · status
-        20 min idle ──▶ the VM stops itself ──▶ the node sleeps
+house TV / phone ──Moonlight──▶ console VM (Sunshine, channels = one pad each)
+
+a person ──▶ Dejarik (the panel) ──▶ Le Veilleur ──▶ wake the node, start the VM
+                                 └──▶ Sunshine: can I play? · pair this PIN
+nobody streaming ──▶ Le Veilleur stops the VM, then sleeps the node
 ```
 
 - **One GPU owner.** The card belongs to one VM; everything that needs it
@@ -43,28 +50,17 @@ house TV / phone ─────────────────────
 - **Everything expires.** Sessions, leases, the VM's uptime, the node's.
 
 The design lives in the lab's documentation
-([`docs/games.md`](https://github.com/tomblancdev/le-squat/blob/main/docs/games.md))
-until it moves here with the doorman.
+([`docs/games.md`](https://github.com/tomblancdev/le-squat/blob/main/docs/games.md)).
 
 ## Status
 
 | Gate | What | State |
 |---|---|---|
-| G0 | the skeleton: collection contracts, module contracts (`screen-vm` + `doorman-ct` validated), the doorman's `/healthz` `/metrics`, CI → GHCR, the first pin | **done** |
-| G1 | the console: `screen-vm` applied, roles `screen` `sunshine` `retrodeck` `library` | next |
-| G2 | the doorman: knock → wake, the play page, the relay; role `doorman`, module `doorman-ct` | |
-| G3 | the first dedicated server: role `servers`, module `servers-vm` | |
+| G0 | the skeleton: collection and module contracts, CI, the first pin | **done** |
+| G1 | the console: `screen-vm` applied, roles `passthrough` `screen` `sunshine` `retrodeck` `library` | **done** |
+| G2 | the panel — which grew a roadmap of its own and left: [Dejarik](https://github.com/tomblancdev/dejarik). The `doorman` role and the `doorman-ct` module were contracts for an app that now lives elsewhere, and were removed in `v0.4.0` | **done, elsewhere** |
+| G3 | the first dedicated server: role `servers`, module `servers-vm` | next |
 | G4 | the public flip: DynHost, the WAN rows, leases through Le Videur | |
-
-## Run the doorman
-
-```sh
-podman run --rm -p 8080:8080 ghcr.io/tomblancdev/arcade:0.1.0
-# http://localhost:8080 — /healthz, /metrics
-```
-
-The image is `scratch` + one binary; it runs as uid 65532 with a read-only
-root. `ARCADE_LISTEN` (default `:8080`). Structured JSON logs on stdout.
 
 ## Develop
 

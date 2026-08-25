@@ -1,6 +1,6 @@
 # screen-vm — the GPU-owner VM. The appliance OS (Bazzite) is installed by
 # hand from the ISO, once; everything after is the `screen` role. The VM is
-# never force-started or stopped by tofu (the doorman and the idle timer own
+# never force-started or stopped by tofu (Le Veilleur owns
 # that): `started` is ignored after creation.
 resource "proxmox_virtual_environment_vm" "screen" {
   node_name   = var.node
@@ -8,7 +8,7 @@ resource "proxmox_virtual_environment_vm" "screen" {
   name        = var.name
   description = var.description
   tags        = var.tags
-  on_boot     = var.on_boot # false once a doorman owns the wake (the node wakes for backups too); true = one WoL, the console is up
+  on_boot     = var.on_boot # false once Le Veilleur owns the wake (the node wakes for backups too); true = one WoL, the console is up
   started     = false
 
   bios    = "ovmf"
