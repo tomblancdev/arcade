@@ -138,10 +138,13 @@ resource "proxmox_virtual_environment_vm" "appliance" {
     }
   }
 
-  # `import_from` is a birth fact: it names a downloaded image that the disk no
-  # longer resembles the moment the guest boots. Only the OS disk is pinned
-  # here — a change to the SEAT disk is a real change and must show in a plan.
+  # `started = false` above is a BIRTH fact, not a policy: who runs this guest
+  # is the operator's business (a watchman, a panel, a hand), and a plan that
+  # offers to stop a machine somebody is playing on is a plan that will one day
+  # be applied by accident. Same for `import_from`: it names a downloaded image
+  # the disk stops resembling the moment the guest boots. Only the OS disk is
+  # pinned — a change to the SEAT disk is a real change and must show in a plan.
   lifecycle {
-    ignore_changes = [disk[0]]
+    ignore_changes = [started, disk[0]]
   }
 }
