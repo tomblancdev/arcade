@@ -2,7 +2,7 @@
 # runbook. Everything a lab sets; nothing here is a secret.
 arcade_screen_user: deck               # the VM's interactive user (uid 1000 on Bazzite: Gaming Mode autologin)
 arcade_screen_hostname: console
-arcade_screen_address: ""              # static IPv4 (cidr), e.g. 10.10.50.21/24 — born at the install, kept here (NetworkManager)
+arcade_screen_address: ""              # static IPv4 (cidr), e.g. 203.0.113.21/24 — born at the install, kept here (NetworkManager)
 arcade_screen_gateway: ""
 arcade_screen_dns: []                  # resolvers (the lab's pair)
 # the automation lane: the user ansible connects as — sudo without a
@@ -15,8 +15,8 @@ arcade_screen_admin_user: "{{ ansible_user | default('ansible') }}"
 # server being down). Soft mounts on purpose: a dead server returns an error
 # to the game instead of hanging the console (and its idle timer).
 arcade_screen_mounts: []
-#  - { src: "10.10.10.12:/tank/games/console", path: /srv/screen/retrodeck, mode: live }
-#  - { src: "10.10.10.12:/tank/games/roms",    path: /srv/roms,             mode: sync-at-wake }
+#  - { src: "198.51.100.12:/tank/games/console", path: /srv/screen/retrodeck, mode: live }
+#  - { src: "198.51.100.12:/tank/games/roms",    path: /srv/roms,             mode: sync-at-wake }
 arcade_screen_mount_options:
   live: "rw,vers=4.2,soft,timeo=30,retrans=3,_netdev,nofail"
   sync-at-wake: "ro,vers=4.2,soft,timeo=30,retrans=3,_netdev,nofail"
@@ -28,8 +28,8 @@ arcade_screen_idle_tx_floor: 2000000    # bytes per 30 s below which nothing is 
 # the log/metrics shipper: Grafana Alloy as a container (an immutable OS
 # layers nothing) — journald + node metrics (the card's hwmon too) pushed to
 # the aggregator. Empty = no shipper.
-arcade_screen_loki_url: ""             # e.g. http://10.10.20.35:3100/loki/api/v1/push
-arcade_screen_prometheus_url: ""       # e.g. http://10.10.20.35:9090/api/v1/write
+arcade_screen_loki_url: ""             # e.g. http://192.0.2.35:3100/loki/api/v1/push
+arcade_screen_prometheus_url: ""       # e.g. http://192.0.2.35:9090/api/v1/write
 arcade_screen_alloy_image: docker.io/grafana/alloy:v1.18.1
 arcade_screen_security_units: [sshd.service]   # streams labelled security="auth" (a lab's retention/burst rules)
 arcade_screen_security_idents: [sudo, su]

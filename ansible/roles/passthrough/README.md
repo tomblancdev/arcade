@@ -29,6 +29,6 @@ second run after the reboot prints `Verified`. Contract:
 
 ```yaml
 arcade_passthrough_devices:
-  - { id: rx5700xt, node: muscle1, path: "0000:09:00", vendor_reset: true, use_by: [automation@pve],
+  - { id: rx5700xt, node: tower, path: "0000:09:00", vendor_reset: true, use_by: [automation@pve],
       description: "RX 5700 XT (Navi 10) + its HDMI audio" }
 ```

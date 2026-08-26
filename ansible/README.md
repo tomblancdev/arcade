@@ -35,7 +35,7 @@ arcade_projects:
   console:
     kind: screen
     vmid: 5001
-    address: 10.10.50.21
+    address: 203.0.113.21
     size: { cores: 6, memory: 16384, disk: 150 }
     idle_minutes: 20
     sunshine: { channels: 4 }

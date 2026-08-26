@@ -8,8 +8,8 @@ Le Veilleur wakes it and stops it.
 
 ```hcl
 module "console" {
-  source      = "github.com/tomblancdev/arcade//tofu/modules/screen-vm?ref=v0.1.0"
-  node        = "muscle1"
+  source      = "github.com/tomblancdev/arcade//tofu/modules/screen-vm?ref=v0.5.0"
+  node        = "tower"
   vmid        = 5001
   gpu_mapping = "rx5700xt"
   bridge      = "games"
@@ -18,4 +18,5 @@ module "console" {
 }
 ```
 
-**Applied at G1** (2026-08-23): VM 5001 `console` on muscle1, the RX 5700 XT through the mapping `rx5700xt` (created by the `passthrough` role).
+The GPU reaches the guest through a cluster mapping created by the
+[`passthrough`](../../../ansible/roles/passthrough) role; `gpu_mapping` names it.

@@ -11,7 +11,7 @@
 #     converge does not read as somebody using the box (that mistake left a
 #     20-minute tail after every converge);
 #   * this box AUTO-LOGS-IN `deck` on **tty1** and seat0 for Gaming Mode, at
-#     every boot, forever. Matching `tty*` — the rule squat-sleep uses on the
+#     every boot, forever. Matching `tty*` — the rule an idle-detector uses on the
 #     headless NODES, where a tty1 login really is a person — made this
 #     script answer IN USE permanently, so the console could never go idle
 #     and would have held the tower awake for good. A borrowed rule has to be

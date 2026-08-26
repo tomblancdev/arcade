@@ -7,7 +7,18 @@ on:
 permissions:
   contents: read
 jobs:
+  # This repo is a platform anyone can run. Whoever runs it keeps their own
+  # addresses, hostnames, domains and house word in their own configuration;
+  # the only thing crossing between them is a pinned tag. A convention nobody
+  # can forget beats one everybody means to keep, so this is a gate.
+  no-environment:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sh tools/no-environment.sh
+
   collection:
+    needs: [no-environment]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -18,6 +29,7 @@ jobs:
       - run: ansible-galaxy collection install /tmp/collection/tomblancdev-arcade-*.tar.gz -p /tmp/collections
       - run: ANSIBLE_COLLECTIONS_PATH=/tmp/collections ansible-galaxy collection list tomblancdev.arcade
   tofu:
+    needs: [no-environment]
     runs-on: ubuntu-latest
     strategy:
       matrix:

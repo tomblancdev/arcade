@@ -7,7 +7,7 @@
 # reboot is REPORTED (cmdline, initramfs, the MOK prompt), never performed.
 arcade_passthrough_devices: []
 #  - id: rx5700xt                 # the cluster mapping's name (what a VM's hostpci line refers to)
-#    node: muscle1                # the node that carries the card (this host)
+#    node: tower                # the node that carries the card (this host)
 #    path: "0000:09:00"           # the PCI device — every function (video + HDMI audio)
 #    description: "RX 5700 XT"    # shown in the PVE UI
 #    vendor_reset: true           # Polaris / Vega / Navi 10-14: the AMD reset bug (gnif/vendor-reset)

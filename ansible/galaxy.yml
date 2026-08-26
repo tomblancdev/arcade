@@ -6,10 +6,10 @@
 #       version: v0.2.0
 namespace: tomblancdev
 name: arcade
-version: 0.4.0
+version: 0.5.0
 readme: README.md
 authors:
-  - Tom Blanc <dev@tomblanc.fr>
+  - Tom Blanc <dev@tomblanc.fr>   # no-environment: ok — the author, not a network
 description: "L'Arcade — a platform of bricks for a home games console and dedicated game servers on Proxmox: the GPU-owner screen VM (Bazzite), emulation + streaming (RetroDECK, Sunshine), the library, a container per game server, the doorman"
 license:
   - MIT

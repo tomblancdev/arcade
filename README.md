@@ -1,4 +1,4 @@
-<p align="center"><img src="ui/static/logo-animated.svg" alt="Le Squat — l'arcade // insert coin" width="640"></p>
+<p align="center"><img src="ui/static/logo-animated.svg" alt="l'arcade — insert coin" width="640"></p>
 
 # L'Arcade
 
@@ -11,11 +11,10 @@ is where a person presses play, and the wake itself belongs to
 console, a Minecraft server, a remote desktop for a relative — *picks bricks*
 and is a few lines of data.
 
-Built for [Le Squat](https://github.com/tomblancdev/le-squat), a three-node
-Proxmox home lab whose gaming node sleeps most of the day. The lab holds the
-**data** (addresses, datasets, firewall rows, identities, secrets); this repo
-holds the **platform** — and stays usable by anyone with a Proxmox box and a
-GPU:
+It was built against a three-node Proxmox home lab whose gaming node sleeps
+most of the day. That deployment holds the **data** (addresses, datasets,
+firewall rows, identities, secrets); this repo holds the **platform** — and
+stays usable by anyone with a Proxmox box and a GPU:
 
 | Part | What | Where |
 |---|---|---|
@@ -49,8 +48,8 @@ nobody streaming ──▶ Le Veilleur stops the VM, then sleeps the node
   from [Le Videur](https://github.com/tomblancdev/videur), never a port.
 - **Everything expires.** Sessions, leases, the VM's uptime, the node's.
 
-The design lives in the lab's documentation
-([`docs/games.md`](https://github.com/tomblancdev/le-squat/blob/main/docs/games.md)).
+The design lives in the documentation of whatever deployment consumes this
+platform — the bricks below are the contract between the two.
 
 ## Status
 
@@ -69,6 +68,16 @@ The collection: `ansible-galaxy collection build ansible/`. The modules:
 `tofu -chdir=tofu/modules/screen-vm init -backend=false && tofu validate`.
 Tags `v*` build and push the image; a lab pins the collection and the
 modules by the same tag.
+
+## This repo carries no environment
+
+Addresses, hostnames, domains, VLAN and group names and the house word belong
+to whoever runs it; the only thing crossing between a deployment and this repo
+is a pinned tag. Examples and role defaults use the documentation reserves —
+`192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24` (RFC 5737), `example.com`
+(RFC 2606) — so nothing here describes a real network, and the mark ships
+carrying the platform's own name. `sh tools/no-environment.sh` enforces it,
+and CI runs it before anything else builds.
 
 ## License
 
