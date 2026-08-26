@@ -128,23 +128,69 @@
     daemon_reload: true
 
 # --- the seat store ---------------------------------------------------------
-- name: What is on the seat device already
-  ansible.builtin.command: "blkid -o value -s TYPE {{ arcade_wolf_data_device }}"
-  register: arcade_wolf_blkid
+# Everything this device already is, in one read. THREE questions, not one,
+# and the reason is a near-miss worth keeping: `blkid -s TYPE` on a
+# PARTITIONED disk returns NOTHING — a partition table is not a filesystem —
+# so a guard that asks only about TYPE reads an OS disk as blank and hands it
+# to mkfs. Ask about the partition table too, and ask whether root is standing
+# on it, because kernel device letters are assigned in probe order and a
+# `sdb` in somebody's config is a guess about enumeration, not a fact.
+- name: Everything the seat device already is
+  ansible.builtin.shell:
+    cmd: |
+      set -u
+      dev=$(readlink -f {{ arcade_wolf_data_device | quote }} 2>/dev/null || echo "")
+      if [ ! -b "$dev" ]; then
+        printf '{"present": false}\n'
+        exit 0
+      fi
+      type=$(blkid -o value -s TYPE "$dev" 2>/dev/null || true)
+      pttype=$(blkid -o value -s PTTYPE "$dev" 2>/dev/null || true)
+      holders=$(lsblk -nro NAME "$dev" 2>/dev/null | tail -n +2 | tr '\n' ' ' | sed 's/ *$//')
+      root=$(findmnt -no SOURCE / 2>/dev/null || true)
+      rootdisk=$(lsblk -nro PKNAME "$root" 2>/dev/null | head -1)
+      [ -n "$rootdisk" ] && rootdisk="/dev/$rootdisk" || rootdisk="$root"
+      printf '{"present": true, "dev": "%s", "type": "%s", "pttype": "%s", "holders": "%s", "rootdisk": "%s"}\n' \
+        "$dev" "$type" "$pttype" "$holders" "$rootdisk"
+    executable: /bin/sh
+  register: arcade_wolf_dev
   changed_when: false
-  failed_when: false
   check_mode: false
   when: arcade_wolf_data_device != ''
 
-- name: Refuse to make a filesystem over one we did not make
+- name: What that means
+  ansible.builtin.set_fact:
+    arcade_wolf_disk: "{{ arcade_wolf_dev.stdout | from_json }}"
+  when: arcade_wolf_data_device != ''
+
+- name: The seat device exists
   ansible.builtin.assert:
     that:
-      - arcade_wolf_blkid.stdout | trim in ['', 'xfs']
+      - arcade_wolf_disk.present
     fail_msg: >-
-      {{ arcade_wolf_data_device }} already carries a
-      '{{ arcade_wolf_blkid.stdout | trim }}' filesystem. This role will not
-      overwrite it — point arcade_wolf_data_device at the right device, or
-      clear that one by hand if it really is scratch.
+      {{ arcade_wolf_data_device }} is not a block device on this host. Name
+      it by a stable path — /dev/disk/by-id/… or /dev/disk/by-path/… — never
+      /dev/sdX: the letters are handed out in probe order, and this role would
+      otherwise be one enumeration away from the wrong disk.
+    quiet: true
+  when: arcade_wolf_data_device != ''
+
+- name: Refuse anything that is not blank or already ours
+  ansible.builtin.assert:
+    that:
+      - arcade_wolf_disk.type in ['', 'xfs']
+      - arcade_wolf_disk.pttype == ''
+      - arcade_wolf_disk.holders == ''
+      - arcade_wolf_disk.dev != arcade_wolf_disk.rootdisk
+    fail_msg: >-
+      REFUSING to make a filesystem on {{ arcade_wolf_disk.dev }}:
+      filesystem='{{ arcade_wolf_disk.type }}'
+      partition-table='{{ arcade_wolf_disk.pttype }}'
+      partitions='{{ arcade_wolf_disk.holders }}'
+      root-is-on='{{ arcade_wolf_disk.rootdisk }}'.
+      A partition table is not a filesystem, so a device that looks empty to
+      `blkid -s TYPE` can still be somebody's whole operating system — which
+      is exactly the disk this check was written for.
     quiet: true
   when: arcade_wolf_data_device != ''
 
@@ -152,7 +198,7 @@
   community.general.filesystem:
     fstype: xfs
     dev: "{{ arcade_wolf_data_device }}"
-  when: arcade_wolf_data_device != '' and arcade_wolf_blkid.stdout | trim == ''
+  when: arcade_wolf_data_device != '' and arcade_wolf_disk.type == ''
 
 - name: Mounted
   ansible.posix.mount:

@@ -26,9 +26,16 @@ arcade_wolf_seats: /srv/seats
 
 # The block device to make the seat store out of. "" = don't: the engine then
 # keeps profile data on whatever filesystem arcade_wolf_seats already sits on,
-# and no quota is enforced. A device that already carries a filesystem we did
-# not make is refused, never overwritten.
+# and no quota is enforced.
+#
+# NAME IT BY A STABLE PATH — /dev/disk/by-id/… or /dev/disk/by-path/… —
+# NEVER /dev/sdX. Kernel letters are handed out in probe order, not in the
+# order the disks were attached: on the host this role was written for, the
+# SECOND disk came up as `sda` and the OS as `sdb`. A device that already
+# carries a filesystem, a partition table, partitions, or the running root is
+# refused, never overwritten.
 arcade_wolf_data_device: ""
+#  e.g. /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi1
 arcade_wolf_data_fs_opts: "rw,noatime,prjquota"
 
 # --- who may use how much --------------------------------------------------
