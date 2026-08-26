@@ -8,7 +8,7 @@ Le Veilleur wakes it and stops it.
 
 ```hcl
 module "console" {
-  source      = "github.com/tomblancdev/arcade//tofu/modules/screen-vm?ref=v0.5.0"
+  source      = "github.com/tomblancdev/arcade//tofu/modules/screen-vm?ref=v0.5.1"
   node        = "tower"
   vmid        = 5001
   gpu_mapping = "rx5700xt"
