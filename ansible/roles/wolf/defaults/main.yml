@@ -1,0 +1,83 @@
+# wolf — the seat engine. One container per person, spawned when somebody
+# connects and removed when they leave; the host carries the engine and
+# nothing else. Everything here is a lab's to set; none of it is a secret.
+
+arcade_wolf_hostname: wolf
+
+# The engine, pinned by DIGEST. `:stable` is a moving tag — the whole point of
+# a pin is that a converge cannot quietly change the engine under a session.
+# Bumping this line IS the update.
+arcade_wolf_image: "ghcr.io/games-on-whales/wolf:stable"
+
+# --- the three paths, and why they are three -------------------------------
+# state: the engine's own — its config, its keypair, its pairings. Small,
+#        irreplaceable, on the OS disk.
+arcade_wolf_state: /srv/wolf
+# runtime: the Wayland and audio sockets. Upstream is explicit that this path
+#        "is expected to be present in the host and mounted in the container",
+#        because the paths it hands to the app containers are HOST paths. Get
+#        this wrong and every seat dies seconds after it starts, with no
+#        display and no sound and nothing in the log that says why.
+arcade_wolf_runtime: /run/wolf
+# seats: what the people who use this thing put in it — one directory per
+#        profile, mounted as that seat's home. Its own filesystem, so a cap
+#        can be a filesystem fact instead of an honour system.
+arcade_wolf_seats: /srv/seats
+
+# The block device to make the seat store out of. "" = don't: the engine then
+# keeps profile data on whatever filesystem arcade_wolf_seats already sits on,
+# and no quota is enforced. A device that already carries a filesystem we did
+# not make is refused, never overwritten.
+arcade_wolf_data_device: ""
+arcade_wolf_data_fs_opts: "rw,noatime,prjquota"
+
+# --- who may use how much --------------------------------------------------
+# A profile is a person: the id is the engine's (it mints one at pairing), the
+# label is what a human reads, the quota is their cap. Empty until identity
+# lands — the machinery exists so that adding a person is a line of data.
+arcade_wolf_profiles: []
+#  - { id: "1234567890123456789", label: someone, quota: 150g }
+arcade_wolf_default_quota: "100g"
+
+# The uid a seat runs as until its own is set (the engine writes it per client
+# at pairing). Deliberately NOT 1000: on a desktop-derived host 1000 is a real
+# interactive account, and seats inheriting it was a fault found the hard way.
+arcade_wolf_run_uid: 3000
+arcade_wolf_run_gid: 3000
+arcade_wolf_run_group: seats
+
+# --- the doors -------------------------------------------------------------
+# Upstream's defaults. They are also Sunshine's defaults, on purpose — same
+# protocol — so a host that runs both must move one of them. Read from the
+# engine's own source: each of these has its own WOLF_*_PORT variable.
+arcade_wolf_ports:
+  https: 47984
+  http: 47989
+  rtsp: 48010
+  video: 48100
+  audio: 48200
+  control: 47999
+
+# the render node the engine hands to seats. Named explicitly: a box with two
+# cards must not be left to pick.
+arcade_wolf_render_node: /dev/dri/renderD128
+arcade_wolf_log_level: INFO
+
+# extra env, last word — anything upstream adds that this role has not learned
+arcade_wolf_extra_env: {}
+
+# The firmware the card needs to exist at all. The cloud images ship none —
+# neither flavour — so it is installed here; that works only because this
+# guest kept an emulated display and can therefore boot without its card.
+arcade_wolf_firmware_packages: [firmware-amd-graphics]
+arcade_wolf_packages: [podman, xfsprogs, qemu-guest-agent, uidmap]
+
+# The engine's virtual pads report the vendor/product ids of the real
+# controllers they imitate — its Xbox pad is byte-identical to a Microsoft
+# one, its DualSense to a Sony one — so only the NAME tells them apart, and
+# every one of them starts with "Wolf". Hiding them matters on a host where
+# something ELSE enumerates input and would grab them (a desktop session, a
+# game launcher). On an appliance nothing does, and a rule that touches the
+# input path is not worth the risk to the thing it would protect. Off by
+# default, here for the host that needs it.
+arcade_wolf_hide_virtual_pads: false

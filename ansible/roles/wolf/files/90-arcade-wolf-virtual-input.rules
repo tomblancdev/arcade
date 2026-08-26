@@ -1,0 +1,15 @@
+# Managed by ansible (tomblancdev.wolf).
+#
+# The seat engine's virtual controllers report the vendor and product ids of
+# the real hardware they imitate — its Xbox pad is byte-identical to a real
+# Microsoft one (045E:02EA), its DualSense to a real Sony one (054C:0CE6) — so
+# filtering on ids would blind this host to genuine controllers as well. Only
+# the NAME tells them apart, and every device the engine makes is named for
+# it.
+#
+# What this is for: a host where something ELSE enumerates input devices and
+# would grab a seat's pad — a desktop session, a game launcher sitting beside
+# the engine. One person's controller driving another person's game is what
+# this prevents. On a host that runs nothing but the engine there is nothing
+# to leak into, and this file is not installed.
+SUBSYSTEM=="input", ATTRS{name}=="Wolf *", ENV{ID_INPUT}="", ENV{ID_INPUT_JOYSTICK}="", ENV{ID_INPUT_KEYBOARD}="", ENV{ID_INPUT_MOUSE}="", TAG-="uaccess"

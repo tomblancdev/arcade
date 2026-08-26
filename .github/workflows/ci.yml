@@ -33,7 +33,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        module: [screen-vm, servers-vm]
+        module: [screen-vm, servers-vm, appliance-vm]
     steps:
       - uses: actions/checkout@v4
       - uses: opentofu/setup-opentofu@v1

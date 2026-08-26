@@ -1,0 +1,75 @@
+# Managed by ansible (tomblancdev.wolf) — the seat engine.
+#
+# It runs as one container and spawns the seats itself, one per person, each
+# with its own compositor and its own home; it removes them when the person
+# leaves. That is why it holds the container engine's socket, and why the
+# privilege statement in this lab's permission model says what it says: the
+# engine effectively owns this guest.
+#
+# THE PATHS ARE THE SAME ON BOTH SIDES ON PURPOSE. What this container hands
+# to the seats it spawns are HOST paths — it is the host's container engine
+# that acts on them. A path that exists only inside here gets created empty
+# outside, and the seat starts with no display and no sound and dies in a
+# couple of seconds without ever saying why.
+[Unit]
+Description=wolf — the seat engine: one container per person, on demand
+After=network-online.target podman.socket
+Wants=network-online.target
+Requires=podman.socket
+
+[Container]
+Image={{ arcade_wolf_image }}
+ContainerName=wolf
+Network=host
+# no-op where there is no SELinux; kept because the socket below is refused
+# outright on a host that has it, and a blanket disable beats a mystery
+SecurityLabelDisable=true
+
+# the engine's own state, the sockets, and the people's homes — identical paths
+Volume={{ arcade_wolf_state }}:{{ arcade_wolf_state }}:rw
+Volume={{ arcade_wolf_runtime }}:{{ arcade_wolf_runtime }}:rw
+Volume={{ arcade_wolf_seats }}:{{ arcade_wolf_seats }}:rw
+# the container engine's API — this is the seat-spawning privilege
+Volume=/run/podman/podman.sock:/var/run/docker.sock:rw
+# the input plane: the whole tree, because the virtual devices are made after
+# this container starts and have to appear on both sides
+Volume=/dev/:/dev/:rw
+Volume=/run/udev:/run/udev:rw
+
+AddDevice=/dev/dri
+AddDevice=/dev/uinput
+AddDevice=/dev/uhid
+# input devices are major 13; a seat's pad is mknod'd into its container after
+# the fact, so the rule has to cover the range rather than a device
+PodmanArgs=--device-cgroup-rule='c 13:* rmw'
+
+Environment=WOLF_LOG_LEVEL={{ arcade_wolf_log_level }}
+# where a person's data goes: <this>/profile_data/<profile>/<app> becomes that
+# seat's home directory. It is the mount with the quotas on it.
+Environment=HOST_APPS_STATE_FOLDER={{ arcade_wolf_seats }}
+# the engine's own files stay on the OS disk, out of anybody's quota
+Environment=WOLF_CFG_FILE={{ arcade_wolf_state }}/cfg/config.toml
+Environment=WOLF_PRIVATE_KEY_FILE={{ arcade_wolf_state }}/cfg/key.pem
+Environment=WOLF_PRIVATE_CERT_FILE={{ arcade_wolf_state }}/cfg/cert.pem
+Environment=WOLF_DOCKER_FAKE_UDEV_PATH={{ arcade_wolf_state }}/fake-udev
+Environment=XDG_RUNTIME_DIR={{ arcade_wolf_runtime }}
+Environment=WOLF_RENDER_NODE={{ arcade_wolf_render_node }}
+# NOT 1000: on a desktop-derived host that is a real person's account, and a
+# seat inheriting it was a fault this lab found by watching a stranger's pad
+# drive somebody else's game
+Environment=WOLF_DEFAULT_RUN_UID={{ arcade_wolf_run_uid }}
+Environment=WOLF_DEFAULT_RUN_GID={{ arcade_wolf_run_gid }}
+{% for k, v in arcade_wolf_ports.items() %}
+Environment=WOLF_{{ {'https': 'HTTPS', 'http': 'HTTP', 'rtsp': 'RTSP_SETUP', 'video': 'VIDEO_PING', 'audio': 'AUDIO_PING', 'control': 'CONTROL'}[k] }}_PORT={{ v }}
+{% endfor %}
+{% for k, v in arcade_wolf_extra_env.items() %}
+Environment={{ k }}={{ v }}
+{% endfor %}
+
+[Service]
+Restart=always
+# the first start pulls the image
+TimeoutStartSec=900
+
+[Install]
+WantedBy=multi-user.target

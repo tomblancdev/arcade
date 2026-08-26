@@ -1,0 +1,10 @@
+---
+- name: arcade wolf restart
+  ansible.builtin.systemd:
+    name: wolf
+    state: restarted
+    daemon_reload: true
+
+- name: arcade wolf udev
+  ansible.builtin.command: udevadm control --reload-rules
+  changed_when: true

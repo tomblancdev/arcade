@@ -1,0 +1,239 @@
+# wolf — the seat engine on a minimal host. Order: refuse the wrong OS →
+# the card can exist (firmware, modules) → a container engine with a socket
+# (the engine spawns seats through it) → the seat store and its caps → the
+# engine itself → is it answering. Nothing here installs an app: what a
+# person may run is a catalogue, projected through the engine's API.
+---
+- name: A Debian-family host with systemd
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.os_family == 'Debian'
+      - ansible_facts.service_mgr == 'systemd'
+    fail_msg: "the wolf role expects a Debian-family host with systemd"
+    quiet: true
+
+- name: Hostname
+  ansible.builtin.hostname:
+    name: "{{ arcade_wolf_hostname }}"
+
+# --- the card ---------------------------------------------------------------
+# The cloud images carry a kernel and no firmware blobs, so a card that needs
+# them is dead until this lands. It is survivable only because this guest has
+# an emulated display: it boots, converges, and THEN has a card.
+- name: non-free-firmware among the apt components (the card's blobs live there)
+  ansible.builtin.replace:
+    path: /etc/apt/sources.list.d/debian.sources
+    regexp: '^(Components:(?!.*non-free-firmware).*)$'
+    replace: '\1 non-free-firmware'
+  register: arcade_wolf_components
+
+- name: Packages (the engine is a container; this is what carries it)
+  ansible.builtin.apt:
+    name: "{{ arcade_wolf_packages + arcade_wolf_firmware_packages }}"
+    state: present
+    update_cache: true
+    cache_valid_time: "{{ 0 if arcade_wolf_components is changed else 3600 }}"
+  register: arcade_wolf_pkgs
+
+- name: "uinput at every boot (the engine makes its virtual pads through it)"
+  ansible.builtin.copy:
+    dest: /etc/modules-load.d/arcade-wolf.conf
+    content: |
+      # Managed by ansible (tomblancdev.wolf) — the seat engine's input plane
+      uinput
+    mode: "0644"
+  register: arcade_wolf_modconf
+
+- name: …and now, without waiting for one
+  community.general.modprobe:
+    name: uinput
+    state: present
+
+- name: The render node exists
+  ansible.builtin.stat:
+    path: "{{ arcade_wolf_render_node }}"
+  register: arcade_wolf_render
+
+- name: "Say so plainly when it does not (firmware just landed → the card needs a reboot)"
+  ansible.builtin.assert:
+    that: [arcade_wolf_render.stat.exists]
+    fail_msg: >-
+      {{ arcade_wolf_render_node }} is absent: the guest has no usable card yet.
+      If the graphics firmware landed in this same run, reboot the guest and
+      converge again — the driver binds at boot, not at install.
+    quiet: true
+  when: not ansible_check_mode
+
+# --- the container engine ---------------------------------------------------
+# Rootful, with its socket: the seat engine creates and destroys the seat
+# containers itself, which means it holds the engine's own API. That is a
+# large privilege and it is stated where the permission model lives, not here.
+- name: The podman socket (the seat engine speaks to it as if it were docker)
+  ansible.builtin.systemd:
+    name: podman.socket
+    enabled: true
+    state: started
+    daemon_reload: true
+
+# --- the seat store ---------------------------------------------------------
+- name: What is on the seat device already
+  ansible.builtin.command: "blkid -o value -s TYPE {{ arcade_wolf_data_device }}"
+  register: arcade_wolf_blkid
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: arcade_wolf_data_device != ''
+
+- name: Refuse to make a filesystem over one we did not make
+  ansible.builtin.assert:
+    that:
+      - arcade_wolf_blkid.stdout | trim in ['', 'xfs']
+    fail_msg: >-
+      {{ arcade_wolf_data_device }} already carries a
+      '{{ arcade_wolf_blkid.stdout | trim }}' filesystem. This role will not
+      overwrite it — point arcade_wolf_data_device at the right device, or
+      clear that one by hand if it really is scratch.
+    quiet: true
+  when: arcade_wolf_data_device != ''
+
+- name: "The seat store's filesystem (project quotas: a cap has to be enforced somewhere real)"
+  community.general.filesystem:
+    fstype: xfs
+    dev: "{{ arcade_wolf_data_device }}"
+  when: arcade_wolf_data_device != '' and arcade_wolf_blkid.stdout | trim == ''
+
+- name: Mounted
+  ansible.posix.mount:
+    src: "{{ arcade_wolf_data_device }}"
+    path: "{{ arcade_wolf_seats }}"
+    fstype: xfs
+    opts: "{{ arcade_wolf_data_fs_opts }}"
+    state: mounted
+  when: arcade_wolf_data_device != ''
+
+- name: The group the seats' files belong to
+  ansible.builtin.group:
+    name: "{{ arcade_wolf_run_group }}"
+    gid: "{{ arcade_wolf_run_gid }}"
+
+- name: The three directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner | default('root') }}"
+    group: "{{ item.group | default('root') }}"
+    mode: "{{ item.mode | default('0755') }}"
+  loop:
+    - { path: "{{ arcade_wolf_state }}" }
+    - { path: "{{ arcade_wolf_state }}/cfg" }
+    - { path: "{{ arcade_wolf_runtime }}", mode: "0755" }
+    - { path: "{{ arcade_wolf_seats }}", group: "{{ arcade_wolf_run_group }}", mode: "0775" }
+    - { path: "{{ arcade_wolf_seats }}/profile_data", group: "{{ arcade_wolf_run_group }}", mode: "0775" }
+  loop_control: { label: "{{ item.path }}" }
+
+# /run is a tmpfs: without this the socket directory is gone at the next boot
+# and every seat fails in a way that looks like the engine's fault.
+- name: The runtime directory survives a reboot
+  ansible.builtin.copy:
+    dest: /etc/tmpfiles.d/arcade-wolf.conf
+    content: |
+      # Managed by ansible (tomblancdev.wolf) — /run is a tmpfs; the seat
+      # engine's socket directory must exist before it starts, at THIS path,
+      # because the paths it hands to seat containers are host paths.
+      d {{ arcade_wolf_runtime }} 0755 root root -
+    mode: "0644"
+
+# --- the caps ---------------------------------------------------------------
+- name: Each profile's directory
+  ansible.builtin.file:
+    path: "{{ arcade_wolf_seats }}/profile_data/{{ item.id }}"
+    state: directory
+    owner: "{{ item.uid | default(arcade_wolf_run_uid) }}"
+    group: "{{ arcade_wolf_run_group }}"
+    mode: "0750"
+  loop: "{{ arcade_wolf_profiles }}"
+  loop_control: { label: "{{ item.label }} ({{ item.id }})" }
+
+- name: The project register (a quota is keyed on a directory, by id)
+  ansible.builtin.copy:
+    dest: "{{ item.dest }}"
+    content: "{{ item.content }}"
+    mode: "0644"
+  loop:
+    - dest: /etc/projid
+      content: |
+        # Managed by ansible (tomblancdev.wolf) — label -> project id
+        {% for p in arcade_wolf_profiles %}
+        {{ p.label }}:{{ loop.index + 1000 }}
+        {% endfor %}
+    - dest: /etc/projects
+      content: |
+        # Managed by ansible (tomblancdev.wolf) — project id -> directory
+        {% for p in arcade_wolf_profiles %}
+        {{ loop.index + 1000 }}:{{ arcade_wolf_seats }}/profile_data/{{ p.id }}
+        {% endfor %}
+  loop_control: { label: "{{ item.dest }}" }
+  when: arcade_wolf_data_device != ''
+
+- name: The caps themselves, on the filesystem
+  ansible.builtin.shell:
+    cmd: |
+      set -eu
+      read_hard() {
+        xfs_quota -x -c 'report -p -N -b' {{ arcade_wolf_seats }} 2>/dev/null \
+          | awk -v p='{{ item.label }}' '$1 == p { print $4 }'
+      }
+      before=$(read_hard)
+      xfs_quota -x -c 'project -s {{ item.label }}' {{ arcade_wolf_seats }} >/dev/null
+      xfs_quota -x -c 'limit -p bhard={{ item.quota | default(arcade_wolf_default_quota) }} {{ item.label }}' {{ arcade_wolf_seats }}
+      after=$(read_hard)
+      [ "$before" = "$after" ] && echo UNCHANGED || echo "CHANGED $before -> $after"
+    executable: /bin/sh
+  loop: "{{ arcade_wolf_profiles }}"
+  loop_control: { label: "{{ item.label }}: {{ item.quota | default(arcade_wolf_default_quota) }}" }
+  register: arcade_wolf_quota
+  changed_when: arcade_wolf_quota.stdout is defined and 'CHANGED' in arcade_wolf_quota.stdout
+  when: arcade_wolf_data_device != ''
+
+# --- the engine -------------------------------------------------------------
+- name: "The Quadlet (podman runs it as a system unit: wolf.service)"
+  ansible.builtin.template:
+    src: wolf.container.j2
+    dest: /etc/containers/systemd/wolf.container
+    mode: "0644"
+  notify: arcade wolf restart
+
+- name: The virtual pads hidden from anything else that enumerates input
+  ansible.builtin.copy:
+    src: 90-arcade-wolf-virtual-input.rules
+    dest: /etc/udev/rules.d/90-arcade-wolf-virtual-input.rules
+    mode: "0644"
+  notify: arcade wolf udev
+  when: arcade_wolf_hide_virtual_pads | bool
+
+- name: …and gone when it is not wanted
+  ansible.builtin.file:
+    path: /etc/udev/rules.d/90-arcade-wolf-virtual-input.rules
+    state: absent
+  notify: arcade wolf udev
+  when: not (arcade_wolf_hide_virtual_pads | bool)
+
+- name: "Running (a generated unit: no enable — the [Install] section is the enable)"
+  ansible.builtin.systemd:
+    name: wolf
+    state: started
+    daemon_reload: true
+
+- name: Flush (the engine is up before anything asks it a question)
+  ansible.builtin.meta: flush_handlers
+
+- name: Health — the engine answers on its own door (the first start pulls the image)
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ arcade_wolf_ports.http }}/serverinfo"
+    status_code: [200, 401, 404]
+  register: arcade_wolf_up
+  retries: 40
+  delay: 5
+  until: arcade_wolf_up.status is defined and arcade_wolf_up.status in [200, 401, 404]
+  changed_when: false
+  when: not ansible_check_mode

@@ -1,0 +1,10 @@
+---
+galaxy_info:
+  author: Tom Blanc
+  description: "the seat engine (Wolf) on a minimal host: the card's firmware, a container engine with its socket, a quota'd seat store, the engine as a system unit"
+  license: MIT
+  min_ansible_version: "2.16"
+  platforms:
+    - name: Debian
+      versions: [all]
+dependencies: []

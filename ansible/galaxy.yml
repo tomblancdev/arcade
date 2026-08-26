@@ -6,11 +6,11 @@
 #       version: v0.2.0
 namespace: tomblancdev
 name: arcade
-version: 0.5.1
+version: 0.6.0
 readme: README.md
 authors:
   - Tom Blanc <dev@tomblanc.fr>   # no-environment: ok — the author, not a network
-description: "L'Arcade — a platform of bricks for a home games console and dedicated game servers on Proxmox: the GPU-owner screen VM (Bazzite), emulation + streaming (RetroDECK, Sunshine), the library, a container per game server, the doorman"
+description: "L'Arcade — a platform of bricks for a home games console and dedicated game servers on Proxmox: a GPU-owner VM with glass (screen) or without (appliance), the seat engine (one container per person, on demand), emulation + streaming, the library, a container per game server"
 license:
   - MIT
 tags:
@@ -20,6 +20,8 @@ tags:
   - moonlight
   - retrodeck
   - bazzite
+  - wolf
+  - streaming
   - homelab
 repository: https://github.com/tomblancdev/arcade
 documentation: https://github.com/tomblancdev/arcade/tree/main/ansible
