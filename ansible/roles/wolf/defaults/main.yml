@@ -70,7 +70,18 @@ arcade_wolf_extra_env: {}
 # neither flavour — so it is installed here; that works only because this
 # guest kept an emulated display and can therefore boot without its card.
 arcade_wolf_firmware_packages: [firmware-amd-graphics]
-arcade_wolf_packages: [podman, xfsprogs, qemu-guest-agent, uidmap]
+arcade_wolf_packages: [podman, xfsprogs, qemu-guest-agent, uidmap, nfs-common]
+
+# --- what every seat can see -----------------------------------------------
+# Shared content: a ROM store, an emulation kit — one copy, mounted read-only,
+# rather than every seat pulling its own into its own home (and its own quota).
+# Soft mounts on purpose: a server that goes away returns an error to the app
+# instead of hanging the box.
+arcade_wolf_mounts: []
+#  - { src: "198.51.100.12:/tank/games/roms", path: /srv/roms, mode: ro }
+arcade_wolf_mount_options:
+  live: "rw,vers=4.2,soft,timeo=30,retrans=3,_netdev,nofail"
+  ro: "ro,vers=4.2,soft,timeo=30,retrans=3,_netdev,nofail"
 
 # The engine's virtual pads report the vendor/product ids of the real
 # controllers they imitate — its Xbox pad is byte-identical to a Microsoft

@@ -20,12 +20,18 @@
 # The cloud images carry a kernel and no firmware blobs, so a card that needs
 # them is dead until this lands. It is survivable only because this guest has
 # an emulated display: it boots, converges, and THEN has a card.
+- name: The deb822 sources file (trixie's default; older layouts keep their own)
+  ansible.builtin.stat:
+    path: /etc/apt/sources.list.d/debian.sources
+  register: arcade_wolf_sources
+
 - name: non-free-firmware among the apt components (the card's blobs live there)
   ansible.builtin.replace:
     path: /etc/apt/sources.list.d/debian.sources
     regexp: '^(Components:(?!.*non-free-firmware).*)$'
     replace: '\1 non-free-firmware'
   register: arcade_wolf_components
+  when: arcade_wolf_sources.stat.exists
 
 - name: Packages (the engine is a container; this is what carries it)
   ansible.builtin.apt:
@@ -49,18 +55,64 @@
     name: uinput
     state: present
 
+- name: The guest agent (the hypervisor asks this guest what its address is)
+  ansible.builtin.systemd:
+    name: qemu-guest-agent
+    enabled: true
+    state: started
+
 - name: The render node exists
   ansible.builtin.stat:
     path: "{{ arcade_wolf_render_node }}"
   register: arcade_wolf_render
 
-- name: "Say so plainly when it does not (firmware just landed → the card needs a reboot)"
+# The driver binds at boot. On the FIRST converge the firmware arrives after
+# that boot, so the card is present and unusable — an honest state, and one
+# worth clearing without making somebody drive to the machine. Reloading the
+# module is enough on a host where nothing has the card open, which is exactly
+# what this host is until the engine starts.
+- name: Rebind the driver now that its firmware exists
+  ansible.builtin.shell:
+    cmd: modprobe -r amdgpu 2>/dev/null; modprobe amdgpu; sleep 3
+    executable: /bin/sh
+  changed_when: true
+  when:
+    - not arcade_wolf_render.stat.exists
+    - arcade_wolf_pkgs is changed
+    - not ansible_check_mode
+
+- name: Look again
+  ansible.builtin.stat:
+    path: "{{ arcade_wolf_render_node }}"
+  register: arcade_wolf_render2
+  when: not arcade_wolf_render.stat.exists and not ansible_check_mode
+
+- name: "A reboot is the honest fallback (the screen role does the same for its layer)"
+  ansible.builtin.reboot:
+    reboot_timeout: 600
+  when:
+    - not arcade_wolf_render.stat.exists
+    - arcade_wolf_render2.stat.exists is defined
+    - not arcade_wolf_render2.stat.exists
+    - arcade_wolf_pkgs is changed
+    - not ansible_check_mode
+
+- name: The render node, for the last time
+  ansible.builtin.stat:
+    path: "{{ arcade_wolf_render_node }}"
+  register: arcade_wolf_render_final
+  when: not ansible_check_mode
+
+- name: "Say so plainly when the card is still not there"
   ansible.builtin.assert:
-    that: [arcade_wolf_render.stat.exists]
+    that:
+      - arcade_wolf_render_final.stat.exists
     fail_msg: >-
-      {{ arcade_wolf_render_node }} is absent: the guest has no usable card yet.
-      If the graphics firmware landed in this same run, reboot the guest and
-      converge again — the driver binds at boot, not at install.
+      {{ arcade_wolf_render_node }} is absent: this guest has no usable card.
+      The firmware is installed and the driver was reloaded and the guest was
+      rebooted, so the fault is upstream of the guest — check that the card is
+      actually mapped through to it, and that the node is not holding it for
+      another guest (a PCI mapping may be DEFINED on several, used by one).
     quiet: true
   when: not ansible_check_mode
 
@@ -142,6 +194,25 @@
       # because the paths it hands to seat containers are host paths.
       d {{ arcade_wolf_runtime }} 0755 root root -
     mode: "0644"
+
+# --- what every seat can see ------------------------------------------------
+- name: Mount points (once mounted, ownership is the server's)
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    mode: "0755"
+  loop: "{{ arcade_wolf_mounts }}"
+  loop_control: { label: "{{ item.path }}" }
+
+- name: The shared mounts (fstab + mounted now)
+  ansible.posix.mount:
+    src: "{{ item.src }}"
+    path: "{{ item.path }}"
+    fstype: nfs4
+    opts: "{{ arcade_wolf_mount_options[item.mode] }}"
+    state: mounted
+  loop: "{{ arcade_wolf_mounts }}"
+  loop_control: { label: "{{ item.path }} ({{ item.mode }}: {{ item.src }})" }
 
 # --- the caps ---------------------------------------------------------------
 - name: Each profile's directory
