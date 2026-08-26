@@ -10,8 +10,11 @@ arcade_wolf_hostname: wolf
 arcade_wolf_image: "ghcr.io/games-on-whales/wolf:stable"
 
 # --- the three paths, and why they are three -------------------------------
-# state: the engine's own — its config, its keypair, its pairings. Small,
-#        irreplaceable, on the OS disk.
+# state: THE root the engine owns — its config, its keypair, its pairings, and
+#        `profile_data/`. Small and irreplaceable apart from profile_data,
+#        which is a bind mount of the seat store below. It has to be one root:
+#        the image recomputes every cfg path from it and ignores what you set
+#        (see the unit template), so a directory is the only lever there is.
 arcade_wolf_state: /srv/wolf
 # runtime: the Wayland and audio sockets. Upstream is explicit that this path
 #        "is expected to be present in the host and mounted in the container",
@@ -20,8 +23,10 @@ arcade_wolf_state: /srv/wolf
 #        display and no sound and nothing in the log that says why.
 arcade_wolf_runtime: /run/wolf
 # seats: what the people who use this thing put in it — one directory per
-#        profile, mounted as that seat's home. Its own filesystem, so a cap
-#        can be a filesystem fact instead of an honour system.
+#        profile, bind-mounted onto <state>/profile_data so the engine finds
+#        it where it insists on looking. Its own filesystem, so a cap can be a
+#        filesystem fact instead of an honour system, and so re-making the
+#        people's disk never costs the engine its pairings.
 arcade_wolf_seats: /srv/seats
 
 # The block device to make the seat store out of. "" = don't: the engine then

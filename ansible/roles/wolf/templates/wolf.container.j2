@@ -44,14 +44,18 @@ AddDevice=/dev/uhid
 PodmanArgs=--device-cgroup-rule='c 13:* rmw'
 
 Environment=WOLF_LOG_LEVEL={{ arcade_wolf_log_level }}
-# where a person's data goes: <this>/profile_data/<profile>/<app> becomes that
-# seat's home directory. It is the mount with the quotas on it.
-Environment=HOST_APPS_STATE_FOLDER={{ arcade_wolf_seats }}
-# the engine's own files stay on the OS disk, out of anybody's quota
-Environment=WOLF_CFG_FILE={{ arcade_wolf_state }}/cfg/config.toml
-Environment=WOLF_PRIVATE_KEY_FILE={{ arcade_wolf_state }}/cfg/key.pem
-Environment=WOLF_PRIVATE_CERT_FILE={{ arcade_wolf_state }}/cfg/cert.pem
-Environment=WOLF_DOCKER_FAKE_UDEV_PATH={{ arcade_wolf_state }}/fake-udev
+# THE root. Everything the engine owns hangs off it: `cfg/` (its config and
+# its keypair), `fake-udev`, and `profile_data/<profile>/<app>` — which is the
+# home directory of that person's seat.
+#
+# Do NOT try to place cfg elsewhere. The image's entrypoint recomputes
+# WOLF_CFG_FOLDER, WOLF_CFG_FILE, WOLF_PRIVATE_KEY_FILE and
+# WOLF_PRIVATE_CERT_FILE from this variable with a plain `export`, no
+# `${VAR:-default}` — so those four are documented as configurable and are
+# overwritten anyway. Setting them here would be a lie the next reader has to
+# discover. The way to move a person's data is the BIND MOUNT the role puts
+# under profile_data, not an environment variable the image ignores.
+Environment=HOST_APPS_STATE_FOLDER={{ arcade_wolf_state }}
 Environment=XDG_RUNTIME_DIR={{ arcade_wolf_runtime }}
 Environment=WOLF_RENDER_NODE={{ arcade_wolf_render_node }}
 # NOT 1000: on a desktop-derived host that is a real person's account, and a

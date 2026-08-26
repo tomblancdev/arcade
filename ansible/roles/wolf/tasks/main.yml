@@ -224,10 +224,25 @@
   loop:
     - { path: "{{ arcade_wolf_state }}" }
     - { path: "{{ arcade_wolf_state }}/cfg" }
+    - { path: "{{ arcade_wolf_state }}/profile_data", group: "{{ arcade_wolf_run_group }}", mode: "0775" }
     - { path: "{{ arcade_wolf_runtime }}", mode: "0755" }
     - { path: "{{ arcade_wolf_seats }}", group: "{{ arcade_wolf_run_group }}", mode: "0775" }
-    - { path: "{{ arcade_wolf_seats }}/profile_data", group: "{{ arcade_wolf_run_group }}", mode: "0775" }
   loop_control: { label: "{{ item.path }}" }
+
+# The engine keeps everything it owns under ONE root and recomputes the paths
+# it was given (see the unit template), so the only way to put the PEOPLE on a
+# different disk from the ENGINE is to move the directory, not the setting.
+# The engine's config and keypair are small and irreplaceable and stay with
+# the OS; profile_data is the capped store, and a rebuild of that store must
+# not cost everybody their pairings.
+- name: The seat store IS profile_data (a bind, because the engine owns the path)
+  ansible.posix.mount:
+    src: "{{ arcade_wolf_seats }}"
+    path: "{{ arcade_wolf_state }}/profile_data"
+    fstype: none
+    opts: bind
+    state: mounted
+  when: arcade_wolf_data_device != ''
 
 # /run is a tmpfs: without this the socket directory is gone at the next boot
 # and every seat fails in a way that looks like the engine's fault.
@@ -263,7 +278,7 @@
 # --- the caps ---------------------------------------------------------------
 - name: Each profile's directory
   ansible.builtin.file:
-    path: "{{ arcade_wolf_seats }}/profile_data/{{ item.id }}"
+    path: "{{ arcade_wolf_seats }}/{{ item.id }}"
     state: directory
     owner: "{{ item.uid | default(arcade_wolf_run_uid) }}"
     group: "{{ arcade_wolf_run_group }}"
@@ -287,7 +302,7 @@
       content: |
         # Managed by ansible (tomblancdev.wolf) — project id -> directory
         {% for p in arcade_wolf_profiles %}
-        {{ loop.index + 1000 }}:{{ arcade_wolf_seats }}/profile_data/{{ p.id }}
+        {{ loop.index + 1000 }}:{{ arcade_wolf_seats }}/{{ p.id }}
         {% endfor %}
   loop_control: { label: "{{ item.dest }}" }
   when: arcade_wolf_data_device != ''
