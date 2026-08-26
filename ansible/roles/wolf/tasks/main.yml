@@ -256,6 +256,20 @@
       d {{ arcade_wolf_runtime }} 0755 root root -
     mode: "0644"
 
+# nfs-common drags rpcbind in, and rpcbind opens 111 on every interface. NFSv4
+# has no use for it — the protocol carries its own port discovery — so this is
+# a listening service that exists only because a dependency wanted it. Masked,
+# not merely stopped: a package update would start it again.
+- name: rpcbind masked (NFSv4 does not use it, and it listens on every interface)
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: stopped
+    enabled: false
+    masked: true
+  loop: [rpcbind.socket, rpcbind.service]
+  failed_when: false
+  when: arcade_wolf_mounts | length > 0
+
 # --- what every seat can see ------------------------------------------------
 - name: Mount points (once mounted, ownership is the server's)
   ansible.builtin.file:
