@@ -57,6 +57,10 @@ Environment=WOLF_LOG_LEVEL={{ arcade_wolf_log_level }}
 # under profile_data, not an environment variable the image ignores.
 Environment=HOST_APPS_STATE_FOLDER={{ arcade_wolf_state }}
 Environment=XDG_RUNTIME_DIR={{ arcade_wolf_runtime }}
+# the engine's own API, a unix socket in the shared runtime directory — the
+# same path on both sides, like everything else in there. This is how the
+# catalogue is projected (wolf-catalogue.service); nothing else reaches it
+Environment=WOLF_SOCKET_PATH={{ arcade_wolf_runtime }}/wolf.sock
 Environment=WOLF_RENDER_NODE={{ arcade_wolf_render_node }}
 # NOT 1000: on a desktop-derived host that is a real person's account, and a
 # seat inheriting it was a fault this lab found by watching a stranger's pad

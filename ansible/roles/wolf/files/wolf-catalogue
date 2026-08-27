@@ -1,0 +1,100 @@
+#!/bin/bash
+# wolf-catalogue — project a catalogue onto the seat engine, through its API.
+#
+# The engine re-serialises its own config file, so nothing here is templated
+# into it: what MAY exist is a JSON document this script reads, what IS there
+# is asked of the engine, and the difference is applied — add what is
+# missing, replace what differs, remove what is named as unwanted. Anything
+# the document does not name is left alone: a person's own additions are
+# runtime state and are not this script's to purge.
+#
+# Usage: wolf-catalogue <catalogue.json> [socket]
+#
+#   catalogue.json = { "apps": [ <App> ... ], "absent": [ "<title>" ... ] }
+#   <App> is the engine's own app shape (title, runner, ...) WITHOUT the
+#   pipeline fields — copied from an app the engine already has, because they
+#   are the engine's business and the API insists on them — and WITHOUT an
+#   id: Moonlight needs a positive 32-bit integer there, minted below.
+#
+# Prints one line per app: ADDED / REPLACED / REMOVED / UNCHANGED, and a
+# final SUMMARY line; exits non-zero when the engine could not be asked.
+set -euo pipefail
+
+catalogue="${1:?catalogue.json}"
+sock="${2:-${WOLF_SOCKET_PATH:-/run/wolf/wolf.sock}}"
+cache="$(dirname "${catalogue}")/pipelines.cache.json"
+
+api() {  # api <method> <path> [json-body]
+  local method="$1" path="$2" body="${3:-}"
+  if [ -n "${body}" ]; then
+    curl -sS --fail-with-body --unix-socket "${sock}" -X "${method}" -H 'Content-Type: application/json' \
+      --data-binary "${body}" "http://localhost${path}"
+  else
+    curl -sS --fail-with-body --unix-socket "${sock}" -X "${method}" "http://localhost${path}"
+  fi
+}
+
+# the engine answers, or there is nothing to project onto
+for _ in $(seq 1 60); do
+  [ -S "${sock}" ] && api GET /api/v1/apps >/dev/null 2>&1 && break
+  sleep 1
+done
+current=$(api GET /api/v1/apps) || { echo "ERROR: the engine does not answer on ${sock}" >&2; exit 1; }
+
+# the pipeline fields, from an app the engine composed itself; kept in a
+# cache for the day the list is empty (nothing to copy from)
+template=$(jq -c '[.apps[] | select(.start_virtual_compositor == true)][0] // empty
+  | {h264_gst_pipeline, hevc_gst_pipeline, av1_gst_pipeline, opus_gst_pipeline, render_node}' <<<"${current}")
+if [ -n "${template}" ]; then
+  printf '%s\n' "${template}" > "${cache}.tmp" && mv "${cache}.tmp" "${cache}"
+elif [ -s "${cache}" ]; then
+  template=$(cat "${cache}")
+else
+  echo "ERROR: no app to copy the pipelines from and no cache at ${cache}" >&2; exit 1
+fi
+
+# what an app IS, for the comparison: the fields we set, with base_create_json
+# read as JSON so that whitespace is not a difference
+shape='{title, start_virtual_compositor, start_audio_server, support_hdr,
+        icon_png_path: (.icon_png_path // null),
+        runner: (.runner | {type, name, image, mounts, env, devices, ports,
+                            base_create_json: (try (.base_create_json | fromjson) catch .base_create_json)})}'
+
+added=0; replaced=0; removed=0; unchanged=0
+while IFS= read -r want; do
+  title=$(jq -r '.title' <<<"${want}")
+  have=$(jq -c --arg t "${title}" '[.apps[] | select(.title == $t)][0] // empty' <<<"${current}")
+  if [ -n "${have}" ]; then
+    if [ "$(jq -c "${shape}" <<<"${have}")" = "$(jq -c "${shape}" <<<"${want}")" ]; then
+      echo "UNCHANGED ${title}"; unchanged=$((unchanged + 1)); continue
+    fi
+    api POST /api/v1/apps/delete "$(jq -c '{id}' <<<"${have}")" >/dev/null
+    verb=REPLACED; replaced=$((replaced + 1))
+  else
+    verb=ADDED; added=$((added + 1))
+  fi
+  # the engine's shape: our fields + its pipelines; and an id, which Moonlight
+  # needs as a POSITIVE SIGNED 32-BIT INTEGER in a string — the engine says so
+  # in as many words and mints its own from a hash of icon + title. A slug
+  # here is a tile that never appears. Minted the same way, kept in range.
+  app_id=$(jq -r '(.icon_png_path // "") + .title' <<<"${want}" | cksum | awk '{print $1 % 2147483647}')
+  full=$(jq -c --argjson t "${template}" --arg id "${app_id}" '
+    ($t + .) | .id = $id
+    | .support_hdr = (.support_hdr // false)
+    | .start_audio_server = (.start_audio_server // true)
+    | .start_virtual_compositor = (.start_virtual_compositor // true)' <<<"${want}")
+  api POST /api/v1/apps/add "${full}" >/dev/null
+  echo "${verb} ${title}"
+done < <(jq -c '.apps[]' "${catalogue}")
+
+current=$(api GET /api/v1/apps)
+while IFS= read -r title; do
+  [ -n "${title}" ] || continue
+  while IFS= read -r id; do
+    [ -n "${id}" ] || continue
+    api POST /api/v1/apps/delete "$(jq -cn --arg id "${id}" '{id: $id}')" >/dev/null
+    echo "REMOVED ${title}"; removed=$((removed + 1))
+  done < <(jq -r --arg t "${title}" '.apps[] | select(.title == $t) | .id' <<<"${current}")
+done < <(jq -r '.absent[]?' "${catalogue}")
+
+echo "SUMMARY added=${added} replaced=${replaced} removed=${removed} unchanged=${unchanged}"

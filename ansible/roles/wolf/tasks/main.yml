@@ -224,25 +224,28 @@
   loop:
     - { path: "{{ arcade_wolf_state }}" }
     - { path: "{{ arcade_wolf_state }}/cfg" }
-    - { path: "{{ arcade_wolf_state }}/profile_data", group: "{{ arcade_wolf_run_group }}", mode: "0775" }
     - { path: "{{ arcade_wolf_runtime }}", mode: "0755" }
     - { path: "{{ arcade_wolf_seats }}", group: "{{ arcade_wolf_run_group }}", mode: "0775" }
   loop_control: { label: "{{ item.path }}" }
 
-# The engine keeps everything it owns under ONE root and recomputes the paths
-# it was given (see the unit template), so the only way to put the PEOPLE on a
-# different disk from the ENGINE is to move the directory, not the setting.
-# The engine's config and keypair are small and irreplaceable and stay with
-# the OS; profile_data is the capped store, and a rebuild of that store must
-# not cost everybody their pairings.
-- name: The seat store IS profile_data (a bind, because the engine owns the path)
+# One-time cleanup: the first build bound the seat store at <root>/profile_data
+# and left the bind in fstab. It is torn down here so a reboot does not raise
+# it again; harmless where it never existed.
+- name: The old profile_data bind is gone (fstab + mount)
   ansible.posix.mount:
-    src: "{{ arcade_wolf_seats }}"
     path: "{{ arcade_wolf_state }}/profile_data"
-    fstype: none
-    opts: bind
-    state: mounted
-  when: arcade_wolf_data_device != ''
+    state: absent
+
+# The engine keeps everything it owns under ONE root (HOST_APPS_STATE_FOLDER)
+# and lays each person's seat home out FLAT beneath it — <root>/<profile>/<app>
+# — NOT under a `profile_data/` subdir. Wolf's older docs implied one and the
+# first build bound the seat store there; found live at G5b rung 3 when a real
+# profile's data landed on the OS disk and the quota never applied. The fix
+# keeps the two-disk split (cfg + keypair small and safe on the OS disk; the
+# people capped on the store) by making EACH profile dir under the engine root
+# a SYMLINK to its quota'd home on the store. Proven live: Wolf follows the
+# link when it creates the home, and podman follows it when it bind-mounts the
+# home into the seat.  (The old profile_data bind is torn down by hand once.)
 
 # /run is a tmpfs: without this the socket directory is gone at the next boot
 # and every seat fails in a way that looks like the engine's fault.
@@ -299,6 +302,64 @@
     mode: "0750"
   loop: "{{ arcade_wolf_profiles }}"
   loop_control: { label: "{{ item.label }} ({{ item.id }})" }
+
+# A profile dir the engine already wrote as a REAL directory under its root
+# (an older layout, or a seat that ran before this play) is moved onto the
+# store, once, before it becomes a symlink. Safe only while the seat is
+# stopped (its home is bind-mounted while it runs); the play stops it first.
+- name: A real profile dir under the engine root is migrated onto the store
+  ansible.builtin.shell:
+    cmd: |
+      set -eu
+      link={{ (arcade_wolf_state ~ '/' ~ item.id) | quote }}
+      store={{ (arcade_wolf_seats ~ '/' ~ item.id) | quote }}
+      [ -L "$link" ] && exit 0
+      if [ -d "$link" ]; then
+        cp -a "$link/." "$store/" 2>/dev/null || true
+        rm -rf "$link"
+        echo MIGRATED
+      fi
+    executable: /bin/sh
+  register: arcade_wolf_migrate
+  changed_when: "'MIGRATED' in arcade_wolf_migrate.stdout"
+  loop: "{{ arcade_wolf_profiles }}"
+  loop_control: { label: "{{ item.label }} ({{ item.id }})" }
+  when: arcade_wolf_data_device != ''
+
+- name: The engine-root profile dir is a symlink to the capped store
+  ansible.builtin.file:
+    src: "{{ arcade_wolf_seats }}/{{ item.id }}"
+    dest: "{{ arcade_wolf_state }}/{{ item.id }}"
+    state: link
+    force: true
+    follow: false
+  loop: "{{ arcade_wolf_profiles }}"
+  loop_control: { label: "{{ item.label }} ({{ item.id }})" }
+  when: arcade_wolf_data_device != ''
+
+# The golden template: a completed app home, captured once, copied into a
+# person's seat the first time it is empty — so a new person's console opens
+# ready, never on a first-run wizard (games.md, G5b rung 3). No template =
+# a no-op, so this is safe before one is captured. Keyed by the app's own
+# directory name (its `title`), which is what Wolf uses for the seat home.
+- name: Seed a new profile's app home from the golden template (once, when empty)
+  ansible.builtin.shell:
+    cmd: |
+      set -eu
+      dest={{ (arcade_wolf_seats ~ '/' ~ item.0.id ~ '/' ~ item.1) | quote }}
+      tmpl={{ (arcade_wolf_golden_dir ~ '/' ~ item.1) | quote }}
+      [ -d "$tmpl" ] || { echo NO_TEMPLATE; exit 0; }
+      if [ -d "$dest" ] && [ -n "$(ls -A "$dest" 2>/dev/null)" ]; then echo EXISTS; exit 0; fi
+      mkdir -p "$dest"
+      cp -a "$tmpl/." "$dest/"
+      chown -R {{ item.0.uid | default(arcade_wolf_run_uid) }}:{{ arcade_wolf_run_gid }} "$dest"
+      echo SEEDED
+    executable: /bin/sh
+  register: arcade_wolf_seed
+  changed_when: "'SEEDED' in arcade_wolf_seed.stdout"
+  loop: "{{ arcade_wolf_profiles | product(arcade_wolf_golden_apps) | list }}"
+  loop_control: { label: "{{ item.0.label }} <- {{ item.1 }}" }
+  when: arcade_wolf_data_device != '' and arcade_wolf_golden_apps | length > 0
 
 - name: The project register (a quota is keyed on a directory, by id)
   ansible.builtin.copy:
@@ -373,6 +434,43 @@
 - name: Flush (the engine is up before anything asks it a question)
   ansible.builtin.meta: flush_handlers
 
+# --- the catalogue ------------------------------------------------------------
+# What may exist, as data on disk; a oneshot unit projects it through the
+# engine's API at every engine start. At converge the same unit is run again,
+# and its report (ADDED / REPLACED / REMOVED / UNCHANGED per app) is what
+# decides `changed`, because the play's exit code would not.
+- name: The projection itself
+  ansible.builtin.copy:
+    src: wolf-catalogue
+    dest: /usr/local/sbin/wolf-catalogue
+    mode: "0755"
+
+- name: The catalogue's directory
+  ansible.builtin.file:
+    path: "{{ arcade_wolf_catalogue_file | dirname }}"
+    state: directory
+    mode: "0755"
+
+- name: "The catalogue — what may exist (data; nothing here is a secret)"
+  ansible.builtin.copy:
+    dest: "{{ arcade_wolf_catalogue_file }}"
+    content: "{{ {'apps': arcade_wolf_apps, 'absent': arcade_wolf_apps_absent} | to_nice_json }}\n"
+    mode: "0644"
+
+- name: "The unit that projects it whenever the engine starts"
+  ansible.builtin.template:
+    src: wolf-catalogue.service.j2
+    dest: /etc/systemd/system/wolf-catalogue.service
+    mode: "0644"
+  register: arcade_wolf_catalogue_unit
+
+- name: …wanted by the engine's own unit
+  ansible.builtin.systemd:
+    name: wolf-catalogue
+    enabled: true
+    daemon_reload: true
+  when: not ansible_check_mode   # a unit check mode never wrote cannot be enabled
+
 - name: Health — the engine answers on its own door (the first start pulls the image)
   ansible.builtin.uri:
     url: "http://127.0.0.1:{{ arcade_wolf_ports.http }}/serverinfo"
@@ -382,4 +480,19 @@
   delay: 5
   until: arcade_wolf_up.status is defined and arcade_wolf_up.status in [200, 401, 404]
   changed_when: false
+  when: not ansible_check_mode
+
+- name: "Project the catalogue now (a report, one line per app)"
+  ansible.builtin.command:
+    cmd: /usr/local/sbin/wolf-catalogue {{ arcade_wolf_catalogue_file }}
+  environment:
+    WOLF_SOCKET_PATH: "{{ arcade_wolf_runtime }}/wolf.sock"
+  register: arcade_wolf_projection
+  changed_when: arcade_wolf_projection.stdout is search('^(ADDED|REPLACED|REMOVED) ', multiline=True)
+  when: not ansible_check_mode and (arcade_wolf_apps | length > 0 or arcade_wolf_apps_absent | length > 0)
+
+- name: "…and the unit agrees with it (so the next engine start does the same)"
+  ansible.builtin.systemd:
+    name: wolf-catalogue
+    state: started
   when: not ansible_check_mode

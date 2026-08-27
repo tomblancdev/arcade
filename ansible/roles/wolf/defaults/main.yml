@@ -82,7 +82,7 @@ arcade_wolf_extra_env: {}
 # neither flavour — so it is installed here; that works only because this
 # guest kept an emulated display and can therefore boot without its card.
 arcade_wolf_firmware_packages: [firmware-amd-graphics]
-arcade_wolf_packages: [podman, xfsprogs, qemu-guest-agent, uidmap, nfs-common]
+arcade_wolf_packages: [podman, xfsprogs, qemu-guest-agent, uidmap, nfs-common, curl, jq]
 
 # --- what every seat can see -----------------------------------------------
 # Shared content: a ROM store, an emulation kit — one copy, mounted read-only,
@@ -104,3 +104,77 @@ arcade_wolf_mount_options:
 # input path is not worth the risk to the thing it would protect. Off by
 # default, here for the host that needs it.
 arcade_wolf_hide_virtual_pads: false
+
+# --- the catalogue: what may exist, projected onto the engine --------------
+# The engine keeps its own config file and rewrites it itself, so nothing is
+# templated into it. What MAY exist is written here as data, and a oneshot
+# unit projects it through the engine's API every time the engine starts (and
+# at every converge): add what is missing, replace what differs, remove what
+# is named absent — and leave everything else alone, because an app a person
+# added is runtime state and not this role's to purge.
+#
+# apps: the engine's own app shape (title, icon_png_path, runner{type, name,
+# image, mounts, env, devices, ports, base_create_json}) — WITHOUT the
+# pipeline fields, which are copied from an app the engine composed itself.
+# The seat's ceiling (a class) is expressed in base_create_json as the
+# container engine's own HostConfig (NanoCpus, Memory), rendered by whoever
+# hands this in — a helper for that is arcade_wolf_host_config below.
+arcade_wolf_apps: []
+#  - title: RetroDECK
+#    icon_png_path: "https://example.com/retrodeck.png"
+#    runner:
+#      type: docker
+#      name: borne
+#      image: "ghcr.io/tomblancdev/borne:0.1.0"
+#      mounts: ["/srv/roms:/srv/roms:ro"]
+#      env: ["RUN_SWAY=true", "GOW_REQUIRED_DEVICES=/dev/input/* /dev/dri/* /dev/nvidia*"]
+#      devices: []
+#      ports: []
+#      base_create_json: '{"HostConfig": {...}}'
+# titles the engine ships or somebody added that must NOT be offered — the
+# engine's own launcher UI, its test pattern
+arcade_wolf_apps_absent: []
+#  - Wolf UI
+#  - Test ball
+arcade_wolf_catalogue_file: /etc/wolf/catalogue.json
+
+# The two HostConfig sets a seat can carry, as the engine's own shipped apps
+# use them. `standard` is what a plain app gets; `nested_sandbox` is the
+# Steam-grade set — an app that runs its OWN sandbox inside the seat
+# (Steam's pressure-vessel, a Flatpak's bubblewrap) needs SYS_ADMIN and no
+# seccomp/AppArmor profile in the way, or it never starts. Both keep
+# Privileged false and the input cgroup rules the engine's virtual pads need.
+arcade_wolf_host_config:
+  standard:
+    IpcMode: host
+    Privileged: false
+    CapAdd: [NET_RAW, MKNOD, NET_ADMIN, SYS_ADMIN, SYS_NICE]
+    DeviceCgroupRules: ["c 13:* rmw", "c 244:* rmw"]
+  nested_sandbox:
+    IpcMode: host
+    Privileged: false
+    CapAdd: [SYS_ADMIN, SYS_NICE, SYS_PTRACE, NET_RAW, MKNOD, NET_ADMIN]
+    # THE nested-sandbox unlock, and it must be `unmask=all`, NOT empty
+    # MaskedPaths/ReadonlyPaths. The container engine masks paths under /proc
+    # (kcore, sys, acpi, ...) with locked read-only mounts, and a nested
+    # sandbox (a Flatpak's bubblewrap, Steam's pressure-vessel) cannot mount
+    # its OWN fresh /proc over those - `bwrap: Can't mount proc on /proc:
+    # Operation not permitted`, and the app never starts. The Docker-API
+    # `MaskedPaths: []` does NOT work on podman: an empty array reads as
+    # "unspecified", and podman re-applies its defaults (proven live - the
+    # masks were still mounted with MaskedPaths=0). podman's own `unmask`
+    # security-opt is the lever that takes, over both the CLI and the
+    # docker-compat socket Wolf drives (both proven, 2026-08-27).
+    SecurityOpt: ["seccomp=unconfined", "apparmor=unconfined", "unmask=all"]
+    Ulimits: [{ Name: nofile, Hard: 10240, Soft: 10240 }]
+    DeviceCgroupRules: ["c 13:* rmw", "c 244:* rmw"]
+
+# --- the golden template: a new person opens a ready console, not a wizard ---
+# Some apps (RetroDECK) have no headless first run, so the only way to spare a
+# new person the setup is to copy a COMPLETED home into their seat the first
+# time it is empty. Capture one clean setup (no saves) into
+# <arcade_wolf_golden_dir>/<app title>, and list that title here; the role
+# seeds it per profile. Empty = every new seat runs the app's own first run.
+arcade_wolf_golden_dir: "{{ arcade_wolf_state }}/golden"
+arcade_wolf_golden_apps: []
+#  - RetroDECK

@@ -28,4 +28,16 @@ Three things worth knowing before you change anything:
   running both must move one of them; every port here has its own environment
   variable, and the engine advertises whatever it was given.
 
+* **The catalogue is projected, never templated.** The engine rewrites its
+  own config file, so what may exist is handed in as data
+  (`arcade_wolf_apps`, `arcade_wolf_apps_absent`), written to
+  `/etc/wolf/catalogue.json`, and a oneshot unit projects it through the
+  engine's API every time the engine starts — add what is missing, replace
+  what differs, remove what is named absent, and leave the rest alone, because
+  an app a person added is theirs. A seat's ceiling travels inside its app
+  definition as the container engine's own `HostConfig` (`NanoCpus`,
+  `Memory`); an app that runs its own sandbox inside the seat (a Flatpak,
+  Steam) needs the wider capability set — both sets are in
+  `arcade_wolf_host_config`, for whoever renders the definitions.
+
 Contract: [`defaults/main.yml`](defaults/main.yml).
