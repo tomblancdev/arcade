@@ -1,0 +1,13 @@
+# Managed by ansible (tomblancdev.wolf) — how often the seats' state is
+# copied off the box. The interval is the most a person can lose to THIS
+# box's disk dying: the engine also copies at every start and stop.
+[Unit]
+Description=wolf-state-sync every {{ arcade_wolf_state_interval }}
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec={{ arcade_wolf_state_interval }}
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

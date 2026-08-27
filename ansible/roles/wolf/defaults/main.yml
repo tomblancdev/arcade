@@ -82,7 +82,7 @@ arcade_wolf_extra_env: {}
 # neither flavour — so it is installed here; that works only because this
 # guest kept an emulated display and can therefore boot without its card.
 arcade_wolf_firmware_packages: [firmware-amd-graphics]
-arcade_wolf_packages: [podman, xfsprogs, qemu-guest-agent, uidmap, nfs-common, curl, jq]
+arcade_wolf_packages: [podman, xfsprogs, qemu-guest-agent, uidmap, nfs-common, curl, jq, rsync]
 
 # --- what every seat can see -----------------------------------------------
 # Shared content: a ROM store, an emulation kit — one copy, mounted read-only,
@@ -168,6 +168,33 @@ arcade_wolf_host_config:
     SecurityOpt: ["seccomp=unconfined", "apparmor=unconfined", "unmask=all"]
     Ulimits: [{ Name: nofile, Hard: 10240, Soft: 10240 }]
     DeviceCgroupRules: ["c 13:* rmw", "c 244:* rmw"]
+
+# --- a person's state: the irreplaceable half, copied off this box ----------
+# A seat home is LOCAL - play never touches the network, whatever the app
+# writes and however often. The folders an app declares as STATE (saves,
+# worlds, gamelists: small next to installs, and the only part nobody can
+# re-download) are copied by `wolf-state-sync` to a mount of the person's
+# own, <root>/<profile id>, every <interval>, at every engine start and stop,
+# and at every converge. The home is the truth while this host runs; the
+# mount is the copy of record between sessions - and being one directory per
+# person, whatever snapshots and backs it up does so per person.
+#
+# Two copies are made safe by ONE rule: a folder is never pushed before it
+# has been pulled once (a marker in the profile dir, outside the app home,
+# records it - a seeded template cannot carry one). So a re-made disk restores
+# itself at the first run and can never wipe what the mount holds. The script
+# refuses a <root>/<id> that is not a mountpoint, skips a person whose state
+# has not changed since the last push (a local mtime check: the idle cost does
+# not grow with the people), and logs `OK` per run - the heartbeat a dead-man
+# watches for. What it costs: at most <interval> of play against THIS box's
+# disk dying, and a file mid-write may be copied torn until the next run.
+# Not for two hosts: one host holds a person's live state at a time.
+arcade_wolf_state_root: ""     # "" = nothing is copied anywhere. Each <root>/<id> must be a mountpoint
+#  e.g. /srv/seats-state   (with a mount per profile in arcade_wolf_mounts: <src>/<id> -> <root>/<id>)
+arcade_wolf_state_apps: {}     # app title -> the folders that ARE state, relative to that app's home
+#  RetroDECK: [retrodeck/saves, retrodeck/states, retrodeck/screenshots, retrodeck/ES-DE/gamelists]
+arcade_wolf_state_interval: 5min
+arcade_wolf_state_file: /etc/wolf/state.json
 
 # --- the golden template: a new person opens a ready console, not a wizard ---
 # Some apps (RetroDECK) have no headless first run, so the only way to spare a

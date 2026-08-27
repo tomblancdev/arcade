@@ -1,0 +1,15 @@
+# Managed by ansible (tomblancdev.wolf) — the seats' state, copied off this
+# box: every folder an app declares as state, for every person, to the mount
+# of their own under {{ arcade_wolf_state_root }} (see /usr/local/sbin/wolf-state-sync
+# for the one rule that makes two copies safe). Run by its timer, by the
+# engine at start and stop, and by a converge.
+[Unit]
+Description=wolf-state-sync — copy every seat's state to its person's own mount
+After=remote-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/wolf-state-sync {{ arcade_wolf_state_file }}
+# a seat always wins: this is a background copy on a box whose job is to play
+Nice=19
+IOSchedulingClass=idle

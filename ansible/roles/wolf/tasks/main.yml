@@ -273,6 +273,25 @@
   failed_when: false
   when: arcade_wolf_mounts | length > 0
 
+# The state root holds one mount PER PERSON; it is a directory, never a mount
+# of its own. An earlier layout mounted the people's parent export there in
+# one piece - with per-person exports that mount goes stale and the person's
+# mountpoint cannot even be created beneath it. Torn down once; a no-op after.
+- name: The state root is a directory, never a mount of its own
+  ansible.builtin.shell:
+    cmd: |
+      set -eu
+      root={{ arcade_wolf_state_root | quote }}
+      if findmnt -n --mountpoint "$root" >/dev/null 2>&1; then umount -l "$root"; echo UNMOUNTED; fi
+      if grep -qE "^[^#[:space:]]+[[:space:]]+$root[[:space:]]" /etc/fstab; then
+        sed -i -E "\#^[^\#[:space:]]+[[:space:]]+$root[[:space:]]#d" /etc/fstab; systemctl daemon-reload; echo DROPPED_FROM_FSTAB
+      fi
+      mkdir -p "$root"
+    executable: /bin/sh
+  register: arcade_wolf_state_root_plain
+  changed_when: arcade_wolf_state_root_plain.stdout is search('UNMOUNTED|DROPPED')
+  when: arcade_wolf_state_root != '' and not ansible_check_mode
+
 # --- what every seat can see ------------------------------------------------
 - name: Mount points (once mounted, ownership is the server's)
   ansible.builtin.file:
@@ -405,6 +424,62 @@
   register: arcade_wolf_quota
   changed_when: arcade_wolf_quota.stdout is defined and 'QUOTA_SET' in arcade_wolf_quota.stdout
   when: arcade_wolf_data_device != ''
+
+# --- a person's state, copied off this box ----------------------------------
+# What is state is data (per app); who exists is data (the profiles); the
+# script reads both from one file and does the one safe thing per folder
+# (pull once, then push - see the script's header). It is run here so the
+# converge reports what moved, and by its timer + the engine's start and stop.
+- name: "The state register (who, which app, which folders - data; nothing here is a secret)"
+  ansible.builtin.copy:
+    dest: "{{ arcade_wolf_state_file }}"
+    content: >-
+      {%- set people = [] -%}
+      {%- for p in arcade_wolf_profiles -%}
+      {%-   set _ = people.append({'id': p.id, 'uid': p.uid | default(arcade_wolf_run_uid), 'gid': p.gid | default(arcade_wolf_run_gid)}) -%}
+      {%- endfor -%}
+      {{ {'root': arcade_wolf_state_root, 'seats': arcade_wolf_seats, 'profiles': people, 'apps': arcade_wolf_state_apps} | to_nice_json }}
+    mode: "0644"
+  when: arcade_wolf_state_root != ''
+
+- name: The copy itself
+  ansible.builtin.copy:
+    src: wolf-state-sync
+    dest: /usr/local/sbin/wolf-state-sync
+    mode: "0755"
+
+- name: Its unit and its timer
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    mode: "0644"
+  loop: [wolf-state-sync.service, wolf-state-sync.timer]
+  when: arcade_wolf_state_root != ''
+
+- name: The timer runs
+  ansible.builtin.systemd:
+    name: wolf-state-sync.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: arcade_wolf_state_root != '' and not ansible_check_mode
+
+- name: "…and off, where no state root is set"
+  ansible.builtin.systemd:
+    name: wolf-state-sync.timer
+    enabled: false
+    state: stopped
+  failed_when: false
+  when: arcade_wolf_state_root == '' and not ansible_check_mode
+
+- name: "Copy now (a report: what was pulled or pushed, per person and folder)"
+  ansible.builtin.command:
+    cmd: /usr/local/sbin/wolf-state-sync {{ arcade_wolf_state_file }}
+  # NOT `arcade_wolf_state`: that is the engine's root path, and a register of
+  # that name clobbered it once (the Quadlet rendered a dict as the volume)
+  register: arcade_wolf_state_run
+  changed_when: "arcade_wolf_state_run.stdout is search(': (PULLED|pushed) ')"   # the per-folder lines, not the summary's counts
+  when: arcade_wolf_state_root != '' and not ansible_check_mode
 
 # --- the engine -------------------------------------------------------------
 - name: "The Quadlet (podman runs it as a system unit: wolf.service)"

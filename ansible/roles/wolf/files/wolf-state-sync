@@ -1,0 +1,116 @@
+#!/bin/bash
+# wolf-state-sync — the irreplaceable half of every seat, copied off this box.
+#
+# A seat's home is LOCAL, and that is what keeps play off the network. The
+# folders an app declares as state (saves, worlds, gamelists — small next to
+# installs, and the only part nobody can re-download) are copied to a mount of
+# the person's own, <root>/<profile>, on a timer and whenever the engine starts
+# or stops. The home is the truth while this host runs; the mount is the copy
+# of record between sessions, and whatever snapshots and backs it up does so
+# per person, because it is one directory (one dataset, if you like) each.
+#
+# ONE RULE MAKES TWO COPIES SAFE: a folder is never pushed before it has been
+# pulled once. A marker — kept in the profile dir, OUTSIDE the app home, so a
+# seeded template can never carry one — records that reconciliation.
+#   no marker : pull  (mount -> home, no deletes, owned by the seat's uid), mark
+#   marker    : push  (home -> mount, WITH deletes: the mount mirrors the
+#               truth; its snapshots keep the history)
+# A re-made disk therefore restores itself at the first run, and can never
+# wipe what the mount holds with an empty or freshly seeded folder.
+#
+# It refuses to work into a directory that is not a mountpoint (an absent
+# export would otherwise be "backed up" onto this box's own disk, silently),
+# skips a person whose state has not changed since the last push (a local
+# mtime check, so the idle cost does not grow with the number of people), and
+# logs one line per folder it touched plus a summary — `OK` is the heartbeat
+# a dead-man watches for; anything skipped or failed makes it `FAILED`.
+#
+# usage: wolf-state-sync <state.json>
+#   {"root": "/srv/seats-state", "seats": "/srv/seats",
+#    "profiles": [{"id": "tom", "uid": 3000, "gid": 3000}],
+#    "apps": {"RetroDECK": ["retrodeck/saves", "retrodeck/ES-DE/gamelists"]}}
+set -u
+set -o pipefail
+cfg="${1:?usage: wolf-state-sync <state.json>}"
+tag=wolf-state-sync
+log() { echo "$tag: $*"; }
+root=$(jq -r .root "$cfg"); seats=$(jq -r .seats "$cfg")
+[ -n "$root" ] && [ "$root" != null ] || { log "OK — no state root configured, nothing to copy"; exit 0; }
+
+# one run at a time: the timer, the engine's start/stop and a converge may
+# all ask at once; a second run has nothing to add to the first
+exec 9>/run/lock/wolf-state-sync.lock
+flock -n 9 || { log "another run holds the lock — skipped"; exit 0; }
+
+# every directory a path is missing, made and handed to the seat's uid — so a
+# pull into a home that never ran the app leaves nothing root-owned in its way
+mkpath() { # <dir> <uid> <gid>
+  d="$1"; missing=""
+  while [ ! -d "$d" ]; do missing="$d $missing"; d=$(dirname "$d"); done
+  for m in $missing; do mkdir "$m" && chown "$2:$3" "$m" || return 1; done
+}
+transferred() { echo "$1" | awk -F: '/Number of regular files transferred/ {gsub(/[ ,]/,"",$2); print $2}'; }
+bytes()       { echo "$1" | awk -F: '/Total transferred file size/ {gsub(/[ ,]/,"",$2); gsub(/bytes/,"",$2); print $2}'; }
+
+t0=$(date +%s)
+fail=0; pushed=0; pulled=0; same=0; skipped=0; people=0
+# lists read line by line (mapfile), never word-split: an app title may carry a space
+mapfile -t ids     < <(jq -r '.profiles[].id' "$cfg")
+mapfile -t apps    < <(jq -r '.apps | keys[]' "$cfg")
+for id in "${ids[@]}"; do
+  people=$((people+1))
+  uid=$(jq -r --arg i "$id" '.profiles[] | select(.id==$i) | .uid' "$cfg")
+  gid=$(jq -r --arg i "$id" '.profiles[] | select(.id==$i) | .gid' "$cfg")
+  mnt="$root/$id"
+  if ! findmnt -n --mountpoint "$mnt" >/dev/null 2>&1; then
+    log "$id: SKIP — $mnt is not a mountpoint (their export is absent; nothing is copied onto this disk)"
+    fail=1; skipped=$((skipped+1)); continue
+  fi
+  for app in "${apps[@]}"; do
+    home="$seats/$id/$app"
+    [ -d "$home" ] || continue      # never opened this app (and no seed): nothing to copy yet
+    mapfile -t folders < <(jq -r --arg a "$app" '.apps[$a][]' "$cfg")
+    for folder in "${folders[@]}"; do
+      local="$home/$folder"; remote="$mnt/$app/$folder"
+      marker="$seats/$id/.state-synced/$app/$(echo "$folder" | tr '/' '_')"
+      if [ ! -f "$marker" ]; then
+        # first reconciliation: whatever the mount already holds comes home
+        # first, without deleting anything — then, and only then, may we push
+        if [ -d "$remote" ]; then
+          mkpath "$local" "$uid" "$gid" || { log "$id/$app/$folder: FAILED — cannot create $local"; fail=1; continue; }
+          if out=$(rsync -rlpt --chown="$uid:$gid" --stats "$remote/" "$local/" 2>&1); then
+            log "$id/$app/$folder: PULLED $(transferred "$out") file(s) from $remote"; pulled=$((pulled+1))
+          else
+            log "$id/$app/$folder: FAILED pull — $(echo "$out" | grep -v '^$' | tail -1)"; fail=1; continue
+          fi
+        fi
+        # the marker's mtime is "when the last push started" - so the first
+        # one is dated at the epoch, or what the home already holds would read
+        # as unchanged and never be pushed until it changed again
+        mkdir -p "$(dirname "$marker")" && date +%s > "$marker" && touch -d @0 "$marker" \
+          || { log "$id/$app/$folder: FAILED — cannot write $marker"; fail=1; continue; }
+      fi
+      [ -d "$local" ] || continue
+      # unchanged since the last push? (local, cheap — the marker's mtime is
+      # the moment the last push STARTED, so a write during it is not missed)
+      if [ -z "$(find "$local" -newer "$marker" -print -quit 2>/dev/null)" ]; then
+        same=$((same+1)); continue
+      fi
+      stamp="$marker.new"; touch "$stamp"
+      mkdir -p "$remote" 2>/dev/null
+      if out=$(rsync -rlpt --delete --stats "$local/" "$remote/" 2>&1); then
+        mv -f "$stamp" "$marker"
+        log "$id/$app/$folder: pushed $(transferred "$out") file(s), $(bytes "$out") bytes"; pushed=$((pushed+1))
+      else
+        rm -f "$stamp"
+        log "$id/$app/$folder: FAILED push — $(echo "$out" | grep -v '^$' | tail -1)"; fail=1
+      fi
+    done
+  done
+done
+took=$(( $(date +%s) - t0 ))
+if [ "$fail" = 0 ]; then
+  log "OK — $people person(s): $pushed pushed, $pulled pulled, $same unchanged, ${took}s"
+else
+  log "FAILED — $people person(s): $pushed pushed, $pulled pulled, $same unchanged, $skipped skipped, ${took}s"; exit 1
+fi

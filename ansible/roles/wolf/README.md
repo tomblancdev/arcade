@@ -40,4 +40,14 @@ Three things worth knowing before you change anything:
   Steam) needs the wider capability set — both sets are in
   `arcade_wolf_host_config`, for whoever renders the definitions.
 
+* **A person's state is copied, not mounted.** The seat home is local so
+  that play never touches the network, whatever the app writes and however
+  often; the folders an app declares as state (`arcade_wolf_state_apps`) are
+  copied by `wolf-state-sync` to a mount of the person's own
+  (`arcade_wolf_state_root/<profile>`) every few minutes and at every engine
+  start and stop. Two copies are kept safe by one rule — a folder is never
+  pushed before it has been pulled once — so a re-made disk restores itself
+  and can never wipe what the mount holds. It logs `OK` per run; watch for
+  its absence. One host holds a person's live state at a time.
+
 Contract: [`defaults/main.yml`](defaults/main.yml).

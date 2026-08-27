@@ -13,7 +13,9 @@
 # couple of seconds without ever saying why.
 [Unit]
 Description=wolf — the seat engine: one container per person, on demand
-After=network-online.target podman.socket
+# remote-fs.target: the people's state mounts come up before the engine and,
+# at shutdown, go away only AFTER it - so the copy at stop has somewhere to go
+After=network-online.target podman.socket remote-fs.target
 Wants=network-online.target
 Requires=podman.socket
 
@@ -78,6 +80,14 @@ Environment={{ k }}={{ v }}
 Restart=always
 # the first start pulls the image
 TimeoutStartSec=900
+{% if arcade_wolf_state_root != '' %}
+# the people's state: pulled home BEFORE anyone can open a seat (a restored
+# disk is whole before play), pushed out when the engine stops (handing the
+# card over loses nothing). The `-`: no mount, the engine still runs - saves
+# stay local and catch up at the next run
+ExecStartPre=-/usr/local/sbin/wolf-state-sync {{ arcade_wolf_state_file }}
+ExecStopPost=-/usr/local/sbin/wolf-state-sync {{ arcade_wolf_state_file }}
+{% endif %}
 
 [Install]
 WantedBy=multi-user.target
