@@ -80,6 +80,12 @@ Environment={{ k }}={{ v }}
 Restart=always
 # the first start pulls the image
 TimeoutStartSec=900
+# the catalogue, landed in the engine's own config BEFORE it reads it: the
+# engine computes a tile's video caps only when it loads the file, and a tile
+# added while it runs shows in Moonlight and never sends a frame. The `-`: a
+# failed projection keeps the previous file (every tile in it still streams)
+# and logs ERROR, which is watched — better than no engine at all
+ExecStartPre=-/usr/local/sbin/wolf-catalogue project {{ arcade_wolf_catalogue_file }} {{ arcade_wolf_state }}/cfg/config.toml
 {% if arcade_wolf_state_root != '' %}
 # the people's state: pulled home BEFORE anyone can open a seat (a restored
 # disk is whole before play), pushed out when the engine stops (handing the

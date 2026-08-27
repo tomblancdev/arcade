@@ -1,100 +1,300 @@
-#!/bin/bash
-# wolf-catalogue — project a catalogue onto the seat engine, through its API.
-#
-# The engine re-serialises its own config file, so nothing here is templated
-# into it: what MAY exist is a JSON document this script reads, what IS there
-# is asked of the engine, and the difference is applied — add what is
-# missing, replace what differs, remove what is named as unwanted. Anything
-# the document does not name is left alone: a person's own additions are
-# runtime state and are not this script's to purge.
-#
-# Usage: wolf-catalogue <catalogue.json> [socket]
-#
-#   catalogue.json = { "apps": [ <App> ... ], "absent": [ "<title>" ... ] }
-#   <App> is the engine's own app shape (title, runner, ...) WITHOUT the
-#   pipeline fields — copied from an app the engine already has, because they
-#   are the engine's business and the API insists on them — and WITHOUT an
-#   id: Moonlight needs a positive 32-bit integer there, minted below.
-#
-# Prints one line per app: ADDED / REPLACED / REMOVED / UNCHANGED, and a
-# final SUMMARY line; exits non-zero when the engine could not be asked.
-set -euo pipefail
+#!/usr/bin/env python3
+"""wolf-catalogue — the catalogue, landed in the engine's own config before it starts.
 
-catalogue="${1:?catalogue.json}"
-sock="${2:-${WOLF_SOCKET_PATH:-/run/wolf/wolf.sock}}"
-cache="$(dirname "${catalogue}")/pipelines.cache.json"
+WHY THE FILE AND NOT THE API. The engine computes the one thing a tile needs
+to stream — its video producer's buffer caps — when it READS ITS CONFIG FILE,
+and nowhere else. An app added through the API is written to that file at
+once but lives in memory with an empty caps until the next start, and a tile
+with an empty caps shows in Moonlight and never sends a frame (the client
+calls it a firewall). So the catalogue is written INTO the file, while the
+engine is stopped, by its own unit's ExecStartPre: every tile the engine
+loads is one it computed the caps for, and the id is the engine's own hash.
 
-api() {  # api <method> <path> [json-body]
-  local method="$1" path="$2" body="${3:-}"
-  if [ -n "${body}" ]; then
-    curl -sS --fail-with-body --unix-socket "${sock}" -X "${method}" -H 'Content-Type: application/json' \
-      --data-binary "${body}" "http://localhost${path}"
-  else
-    curl -sS --fail-with-body --unix-socket "${sock}" -X "${method}" "http://localhost${path}"
-  fi
-}
+WHAT IT OWNS. Only the Moonlight profile's app list (`profiles[].id ==
+moonlight-profile-id`, the list every paired client sees), and in it only
+what it wrote or what the catalogue names. Every app it writes carries a
+mark (`SQUAT_CATALOGUE=1` in the runner's env): an app in `apps` is added or
+brought in line; a marked app the catalogue no longer names was struck from
+it and is removed; a title in `absent` is removed whoever wrote it (the
+engine's own defaults). Anything else in that list — a person's own,
+unmarked addition — is runtime state and is left alone. Nothing else in the
+file is touched (tomlkit round-trips it; the paired clients and the
+pipelines come out byte for byte), and the rewrite is read back by a second
+parser before it replaces the file — the previous file stays whenever
+anything is off.
 
-# the engine answers, or there is nothing to project onto
-for _ in $(seq 1 60); do
-  [ -S "${sock}" ] && api GET /api/v1/apps >/dev/null 2>&1 && break
-  sleep 1
-done
-current=$(api GET /api/v1/apps) || { echo "ERROR: the engine does not answer on ${sock}" >&2; exit 1; }
+TWO MODES, ONE COMPARISON.
+  project <catalogue.json> <config.toml>   engine STOPPED: write the file.
+      ADDED / REPLACED / REMOVED / UNCHANGED per app, SUMMARY (file).
+      No config yet (first boot): SEED — the engine writes its default, the
+      converge sees the gap and restarts it once. Any failure: ERROR, the
+      file untouched, exit 1.
+  diff <catalogue.json> [socket]           engine RUNNING: read-only report of
+      what the engine HAS against what may exist — PENDING ADD/REPLACE/REMOVE
+      per app, SUMMARY (engine) with the number of live sessions, so the
+      caller can restart when nobody is playing and defer when somebody is.
+      A pending change also goes to the journal (READY or DEFERRED), so it
+      is visible in Loki and not only in a play's output.
 
-# the pipeline fields, from an app the engine composed itself; kept in a
-# cache for the day the list is empty (nothing to copy from)
-template=$(jq -c '[.apps[] | select(.start_virtual_compositor == true)][0] // empty
-  | {h264_gst_pipeline, hevc_gst_pipeline, av1_gst_pipeline, opus_gst_pipeline, render_node}' <<<"${current}")
-if [ -n "${template}" ]; then
-  printf '%s\n' "${template}" > "${cache}.tmp" && mv "${cache}.tmp" "${cache}"
-elif [ -s "${cache}" ]; then
-  template=$(cat "${cache}")
-else
-  echo "ERROR: no app to copy the pipelines from and no cache at ${cache}" >&2; exit 1
-fi
+catalogue.json = {"apps": [<App>...], "absent": ["<title>"...]}, <App> being
+the engine's app shape without the pipeline fields and without an id.
+"""
+import http.client
+import json
+import os
+import socket
+import sys
+import syslog
 
-# what an app IS, for the comparison: the fields we set, with base_create_json
-# read as JSON so that whitespace is not a difference
-shape='{title, start_virtual_compositor, start_audio_server, support_hdr,
-        icon_png_path: (.icon_png_path // null),
-        runner: (.runner | {type, name, image, mounts, env, devices, ports,
-                            base_create_json: (try (.base_create_json | fromjson) catch .base_create_json)})}'
+TAG = "wolf-catalogue"
+MOONLIGHT_PROFILE = "moonlight-profile-id"
+MARK = "SQUAT_CATALOGUE=1"       # what this script wrote, so it may remove it later
+RUNNER_LISTS = ("mounts", "env", "devices", "ports")
 
-added=0; replaced=0; removed=0; unchanged=0
-while IFS= read -r want; do
-  title=$(jq -r '.title' <<<"${want}")
-  have=$(jq -c --arg t "${title}" '[.apps[] | select(.title == $t)][0] // empty' <<<"${current}")
-  if [ -n "${have}" ]; then
-    if [ "$(jq -c "${shape}" <<<"${have}")" = "$(jq -c "${shape}" <<<"${want}")" ]; then
-      echo "UNCHANGED ${title}"; unchanged=$((unchanged + 1)); continue
-    fi
-    api POST /api/v1/apps/delete "$(jq -c '{id}' <<<"${have}")" >/dev/null
-    verb=REPLACED; replaced=$((replaced + 1))
-  else
-    verb=ADDED; added=$((added + 1))
-  fi
-  # the engine's shape: our fields + its pipelines; and an id, which Moonlight
-  # needs as a POSITIVE SIGNED 32-BIT INTEGER in a string — the engine says so
-  # in as many words and mints its own from a hash of icon + title. A slug
-  # here is a tile that never appears. Minted the same way, kept in range.
-  app_id=$(jq -r '(.icon_png_path // "") + .title' <<<"${want}" | cksum | awk '{print $1 % 2147483647}')
-  full=$(jq -c --argjson t "${template}" --arg id "${app_id}" '
-    ($t + .) | .id = $id
-    | .support_hdr = (.support_hdr // false)
-    | .start_audio_server = (.start_audio_server // true)
-    | .start_virtual_compositor = (.start_virtual_compositor // true)' <<<"${want}")
-  api POST /api/v1/apps/add "${full}" >/dev/null
-  echo "${verb} ${title}"
-done < <(jq -c '.apps[]' "${catalogue}")
 
-current=$(api GET /api/v1/apps)
-while IFS= read -r title; do
-  [ -n "${title}" ] || continue
-  while IFS= read -r id; do
-    [ -n "${id}" ] || continue
-    api POST /api/v1/apps/delete "$(jq -cn --arg id "${id}" '{id: $id}')" >/dev/null
-    echo "REMOVED ${title}"; removed=$((removed + 1))
-  done < <(jq -r --arg t "${title}" '.apps[] | select(.title == $t) | .id' <<<"${current}")
-done < <(jq -r '.absent[]?' "${catalogue}")
+def say(line):
+    print(f"{TAG}: {line}", flush=True)
 
-echo "SUMMARY added=${added} replaced=${replaced} removed=${removed} unchanged=${unchanged}"
+
+def die(msg):
+    say(f"ERROR {msg}")
+    sys.exit(1)
+
+
+def load_catalogue(path):
+    with open(path) as f:
+        cat = json.load(f)
+    apps = cat.get("apps") or []
+    for a in apps:
+        if not a.get("title") or not (a.get("runner") or {}).get("type"):
+            die(f"catalogue app without a title or a runner type: {a!r}")
+        env = list(a["runner"].get("env") or [])
+        if MARK not in env:
+            env.append(MARK)
+        a["runner"]["env"] = env
+    return apps, [t for t in (cat.get("absent") or []) if t]
+
+
+def owned(app):
+    return MARK in ((app.get("runner") or {}).get("env") or [])
+
+
+def shape(app, want):
+    """What an app IS, for the comparison: the fields the catalogue owns, in a
+    form the file (BaseApp), the API (App) and the catalogue all reduce to."""
+    r = app.get("runner") or {}
+    bcj = r.get("base_create_json")
+    if isinstance(bcj, str):
+        try:
+            bcj = json.loads(bcj)
+        except ValueError:
+            pass
+    s = {
+        "title": app.get("title"),
+        "icon_png_path": app.get("icon_png_path") or None,
+        "start_virtual_compositor": bool(app.get("start_virtual_compositor", True)),
+        "start_audio_server": bool(app.get("start_audio_server", True)),
+        "runner": {
+            "type": str(r.get("type") or "").lower(),
+            "name": r.get("name"),
+            "image": r.get("image"),
+            "base_create_json": bcj,
+            **{k: list(r.get(k) or []) for k in RUNNER_LISTS},
+        },
+    }
+    # the render node is the engine's default unless the catalogue names one
+    if want.get("render_node"):
+        s["render_node"] = app.get("render_node")
+    return s
+
+
+def same(have, want):
+    return shape(have, want) == shape(want, want)
+
+
+# --- project: the file ---------------------------------------------------------
+
+def to_table(want, tomlkit):
+    t = tomlkit.table()
+    t["title"] = str(want["title"])
+    if want.get("icon_png_path"):
+        t["icon_png_path"] = str(want["icon_png_path"])
+    if want.get("render_node"):
+        t["render_node"] = str(want["render_node"])
+    t["start_virtual_compositor"] = bool(want.get("start_virtual_compositor", True))
+    t["start_audio_server"] = bool(want.get("start_audio_server", True))
+    r, wr = tomlkit.table(), want["runner"]
+    r["type"] = str(wr["type"])
+    for k in ("name", "image"):
+        if wr.get(k) is not None:
+            r[k] = str(wr[k])
+    for k in RUNNER_LISTS:
+        r[k] = [str(x) for x in (wr.get(k) or [])]
+    bcj = wr.get("base_create_json")
+    if bcj is not None:
+        r["base_create_json"] = bcj if isinstance(bcj, str) else json.dumps(bcj)
+    if wr.get("run_cmd") is not None:
+        r["run_cmd"] = str(wr["run_cmd"])
+    t["runner"] = r
+    return t
+
+
+def project(cat_path, cfg_path):
+    import tomllib
+    try:
+        import tomlkit
+    except ImportError:
+        die("python3-tomlkit is not installed — nothing written")
+    apps, absent = load_catalogue(cat_path)
+    if not os.path.exists(cfg_path):
+        say("SEED no config yet — the engine writes its default first; the projection lands at the next start")
+        return
+    with open(cfg_path) as f:
+        original = f.read()
+    try:
+        doc = tomlkit.parse(original)
+    except Exception as e:  # noqa: BLE001
+        die(f"cannot parse {cfg_path}: {e}")
+    profiles = doc.get("profiles")
+    if not profiles:
+        die(f"{cfg_path} has no profiles — not a config this engine wrote")
+    profile = next((p for p in profiles if p.get("id") == MOONLIGHT_PROFILE), None)
+    if profile is None:
+        die(f"{cfg_path} has no {MOONLIGHT_PROFILE} profile")
+    current = profile.get("apps") or []
+
+    added = replaced = removed = unchanged = 0
+    kept = []       # the tables, in the order they will be written
+    for entry in current:
+        plain = entry.unwrap()
+        title = plain.get("title")
+        want = next((a for a in apps if a["title"] == title), None)
+        if title in absent or (want is None and owned(plain)):
+            say(f"REMOVED {title}"); removed += 1     # named absent, or ours and struck
+            continue
+        if want is None:
+            kept.append(entry)          # not ours: left exactly as it is
+            continue
+        if same(plain, want):
+            say(f"UNCHANGED {title}"); unchanged += 1
+            kept.append(entry)
+        else:
+            say(f"REPLACED {title}"); replaced += 1
+            kept.append(to_table(want, tomlkit))
+    present = {e.unwrap().get("title") for e in kept}
+    for want in apps:
+        if want["title"] not in present:
+            say(f"ADDED {want['title']}"); added += 1
+            kept.append(to_table(want, tomlkit))
+
+    say(f"SUMMARY added={added} replaced={replaced} removed={removed} unchanged={unchanged} (file)")
+    if not (added or replaced or removed):
+        return
+
+    fresh = tomlkit.aot()
+    for e in kept:
+        fresh.append(e)
+    profile["apps"] = fresh
+    text = tomlkit.dumps(doc)
+
+    # a second, independent parser reads the result before it lands — and
+    # what it reads must be what was meant, or the previous file stays
+    try:
+        check = tomllib.loads(text)
+        before = tomllib.loads(original)
+    except Exception as e:  # noqa: BLE001
+        die(f"the rewritten config does not parse — file untouched: {e}")
+    got = [a.get("title") for p in check["profiles"] if p.get("id") == MOONLIGHT_PROFILE for a in p.get("apps", [])]
+    want_titles = [e.unwrap().get("title") for e in kept]
+    if got != want_titles:
+        die(f"the rewritten profile lists {got}, expected {want_titles} — file untouched")
+    for key in ("paired_clients", "gstreamer", "config_version", "uuid", "hostname"):
+        if check.get(key) != before.get(key):
+            die(f"the rewrite changed `{key}`, which is not the catalogue's — file untouched")
+
+    st = os.stat(cfg_path)
+    tmp = cfg_path + ".tmp"
+    with open(tmp, "w") as f:
+        f.write(text)
+        f.flush()
+        os.fsync(f.fileno())
+    os.chmod(tmp, st.st_mode & 0o7777)
+    os.chown(tmp, st.st_uid, st.st_gid)
+    with open(cfg_path + ".bak", "w") as f:   # the previous file, one deep
+        f.write(original)
+    os.replace(tmp, cfg_path)
+
+
+# --- diff: the engine ----------------------------------------------------------
+
+class UnixHTTP(http.client.HTTPConnection):
+    def __init__(self, path):
+        super().__init__("localhost", timeout=10)
+        self.unix_path = path
+
+    def connect(self):
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        s.settimeout(self.timeout)
+        s.connect(self.unix_path)
+        self.sock = s
+
+
+def api_get(sock, path):
+    conn = UnixHTTP(sock)
+    conn.request("GET", path)
+    resp = conn.getresponse()
+    body = resp.read()
+    conn.close()
+    if resp.status != 200:
+        raise RuntimeError(f"{path} -> HTTP {resp.status}")
+    return json.loads(body)
+
+
+def diff(cat_path, sock):
+    apps, absent = load_catalogue(cat_path)
+    try:
+        have = api_get(sock, "/api/v1/apps").get("apps") or []
+        sessions = api_get(sock, "/api/v1/sessions").get("sessions") or []
+    except (OSError, RuntimeError, ValueError) as e:
+        die(f"the engine does not answer on {sock}: {e}")
+    lines, pending, unchanged = [], 0, 0
+    for want in apps:
+        h = next((a for a in have if a.get("title") == want["title"]), None)
+        if h is None:
+            lines.append(f"PENDING ADD {want['title']}"); pending += 1
+        elif same(h, want):
+            lines.append(f"UNCHANGED {want['title']}"); unchanged += 1
+        else:
+            lines.append(f"PENDING REPLACE {want['title']}"); pending += 1
+    named = {w["title"] for w in apps}
+    for a in have:
+        if a.get("title") in absent or (owned(a) and a.get("title") not in named):
+            lines.append(f"PENDING REMOVE {a.get('title')}"); pending += 1
+    for line in lines:
+        say(line)
+    say(f"SUMMARY pending={pending} unchanged={unchanged} sessions={len(sessions)} (engine)")
+    if pending:
+        syslog.openlog(TAG)
+        state = "DEFERRED" if sessions else "READY"
+        syslog.syslog(syslog.LOG_WARNING if sessions else syslog.LOG_INFO,
+                      f"{state} {pending} catalogue change(s) not in the engine yet ({len(sessions)} live session(s)): "
+                      + ", ".join(l for l in lines if l.startswith("PENDING")))
+
+
+def usage():
+    sys.stderr.write("usage: wolf-catalogue project <catalogue.json> <config.toml>\n"
+                     "       wolf-catalogue diff <catalogue.json> [socket]\n")
+    sys.exit(2)
+
+
+def main(argv):
+    if len(argv) == 4 and argv[1] == "project":
+        project(argv[2], argv[3])
+    elif len(argv) in (3, 4) and argv[1] == "diff":
+        diff(argv[2], argv[3] if len(argv) == 4 else os.environ.get("WOLF_SOCKET_PATH", "/run/wolf/wolf.sock"))
+    else:
+        usage()
+
+
+if __name__ == "__main__":
+    main(sys.argv)

@@ -2,7 +2,8 @@
 # the card can exist (firmware, modules) → a container engine with a socket
 # (the engine spawns seats through it) → the seat store and its caps → the
 # engine itself → is it answering. Nothing here installs an app: what a
-# person may run is a catalogue, projected through the engine's API.
+# person may run is a catalogue, written into the engine's own config just
+# before the engine reads it (why not the API: defaults/main.yml).
 ---
 - name: A Debian-family host with systemd
   ansible.builtin.assert:
@@ -481,6 +482,29 @@
   changed_when: "arcade_wolf_state_run.stdout is search(': (PULLED|pushed) ')"   # the per-folder lines, not the summary's counts
   when: arcade_wolf_state_root != '' and not ansible_check_mode
 
+# --- the catalogue: what may exist, as data --------------------------------
+# The engine's own unit projects this into the engine's config at every start
+# (ExecStartPre in the Quadlet) — so the script and the data are in place
+# BEFORE the engine is (re)started below, and a change here notifies nothing:
+# whether it lands now or at the next start is decided after the engine is up.
+- name: The projection itself
+  ansible.builtin.copy:
+    src: wolf-catalogue
+    dest: /usr/local/sbin/wolf-catalogue
+    mode: "0755"
+
+- name: The catalogue's directory
+  ansible.builtin.file:
+    path: "{{ arcade_wolf_catalogue_file | dirname }}"
+    state: directory
+    mode: "0755"
+
+- name: "The catalogue — what may exist (data; nothing here is a secret)"
+  ansible.builtin.copy:
+    dest: "{{ arcade_wolf_catalogue_file }}"
+    content: "{{ {'apps': arcade_wolf_apps, 'absent': arcade_wolf_apps_absent} | to_nice_json }}\n"
+    mode: "0644"
+
 # --- the engine -------------------------------------------------------------
 - name: "The Quadlet (podman runs it as a system unit: wolf.service)"
   ansible.builtin.template:
@@ -513,42 +537,35 @@
 - name: Flush (the engine is up before anything asks it a question)
   ansible.builtin.meta: flush_handlers
 
-# --- the catalogue ------------------------------------------------------------
-# What may exist, as data on disk; a oneshot unit projects it through the
-# engine's API at every engine start. At converge the same unit is run again,
-# and its report (ADDED / REPLACED / REMOVED / UNCHANGED per app) is what
-# decides `changed`, because the play's exit code would not.
-- name: The projection itself
-  ansible.builtin.copy:
-    src: wolf-catalogue
-    dest: /usr/local/sbin/wolf-catalogue
-    mode: "0755"
-
-- name: The catalogue's directory
-  ansible.builtin.file:
-    path: "{{ arcade_wolf_catalogue_file | dirname }}"
-    state: directory
-    mode: "0755"
-
-- name: "The catalogue — what may exist (data; nothing here is a secret)"
-  ansible.builtin.copy:
-    dest: "{{ arcade_wolf_catalogue_file }}"
-    content: "{{ {'apps': arcade_wolf_apps, 'absent': arcade_wolf_apps_absent} | to_nice_json }}\n"
-    mode: "0644"
-
-- name: "The unit that projects it whenever the engine starts"
-  ansible.builtin.template:
-    src: wolf-catalogue.service.j2
-    dest: /etc/systemd/system/wolf-catalogue.service
-    mode: "0644"
-  register: arcade_wolf_catalogue_unit
-
-- name: …wanted by the engine's own unit
+# --- the catalogue: has it landed? -----------------------------------------
+# A converge pushes nothing through the API (a tile the engine did not read
+# from its file at start cannot stream). It READS what the engine has against
+# the catalogue and, when they differ, restarts the engine — only when nobody
+# is playing. Otherwise the change is deferred, said here and in the journal,
+# and lands at the next engine start (the appliance stops when idle anyway).
+- name: "The oneshot that projected through the API is retired (v0.9: the projection runs before the engine starts)"
   ansible.builtin.systemd:
     name: wolf-catalogue
-    enabled: true
+    enabled: false
+    state: stopped
+  failed_when: false
+  when: not ansible_check_mode
+
+- name: …its unit file gone
+  ansible.builtin.file:
+    path: /etc/systemd/system/wolf-catalogue.service
+    state: absent
+  register: arcade_wolf_catalogue_oneshot
+
+- name: …and systemd told
+  ansible.builtin.systemd:
     daemon_reload: true
-  when: not ansible_check_mode   # a unit check mode never wrote cannot be enabled
+  when: arcade_wolf_catalogue_oneshot.changed and not ansible_check_mode
+
+- name: …and the pipelines cache the API path kept (the engine computes them from its file now)
+  ansible.builtin.file:
+    path: "{{ arcade_wolf_catalogue_file | dirname }}/pipelines.cache.json"
+    state: absent
 
 - name: Health — the engine answers on its own door (the first start pulls the image)
   ansible.builtin.uri:
@@ -561,17 +578,48 @@
   changed_when: false
   when: not ansible_check_mode
 
-- name: "Project the catalogue now (a report, one line per app)"
+- name: "The catalogue against the engine (a report: PENDING per app that differs, and who is playing)"
   ansible.builtin.command:
-    cmd: /usr/local/sbin/wolf-catalogue {{ arcade_wolf_catalogue_file }}
+    cmd: /usr/local/sbin/wolf-catalogue diff {{ arcade_wolf_catalogue_file }}
   environment:
     WOLF_SOCKET_PATH: "{{ arcade_wolf_runtime }}/wolf.sock"
   register: arcade_wolf_projection
-  changed_when: arcade_wolf_projection.stdout is search('^(ADDED|REPLACED|REMOVED) ', multiline=True)
+  changed_when: "'PENDING' in arcade_wolf_projection.stdout"
   when: not ansible_check_mode and (arcade_wolf_apps | length > 0 or arcade_wolf_apps_absent | length > 0)
 
-- name: "…and the unit agrees with it (so the next engine start does the same)"
+- name: What the report says
+  ansible.builtin.set_fact:
+    arcade_wolf_pending: "{{ arcade_wolf_projection.stdout | default('') | regex_search('pending=(\\d+)', '\\1') | default(['0'], true) | first | int }}"
+    arcade_wolf_sessions: "{{ arcade_wolf_projection.stdout | default('') | regex_search('sessions=(\\d+)', '\\1') | default(['0'], true) | first | int }}"
+
+- name: "Land it now — nobody is playing: the engine restarts and reads the catalogue on its way up"
   ansible.builtin.systemd:
-    name: wolf-catalogue
-    state: started
-  when: not ansible_check_mode
+    name: wolf
+    state: restarted
+  when: not ansible_check_mode and arcade_wolf_pending | int > 0 and arcade_wolf_sessions | int == 0
+
+- name: …and answers again
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ arcade_wolf_ports.http }}/serverinfo"
+    status_code: [200, 401, 404]
+  register: arcade_wolf_up_again
+  retries: 40
+  delay: 5
+  until: arcade_wolf_up_again.status is defined and arcade_wolf_up_again.status in [200, 401, 404]
+  changed_when: false
+  when: not ansible_check_mode and arcade_wolf_pending | int > 0 and arcade_wolf_sessions | int == 0
+
+- name: "…and the report agrees (a PENDING here is a fault in the projection, not a deferral)"
+  ansible.builtin.command:
+    cmd: /usr/local/sbin/wolf-catalogue diff {{ arcade_wolf_catalogue_file }}
+  environment:
+    WOLF_SOCKET_PATH: "{{ arcade_wolf_runtime }}/wolf.sock"
+  register: arcade_wolf_projection_after
+  changed_when: false
+  failed_when: "'PENDING' in arcade_wolf_projection_after.stdout"
+  when: not ansible_check_mode and arcade_wolf_pending | int > 0 and arcade_wolf_sessions | int == 0
+
+- name: "Deferred — somebody is playing; the change lands at the next engine start"
+  ansible.builtin.debug:
+    msg: "{{ arcade_wolf_projection.stdout_lines | select('search', 'PENDING') | list }} — {{ arcade_wolf_sessions }} live session(s), nothing restarted"
+  when: not ansible_check_mode and arcade_wolf_pending | int > 0 and arcade_wolf_sessions | int > 0

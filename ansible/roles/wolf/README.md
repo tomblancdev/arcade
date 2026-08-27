@@ -10,8 +10,8 @@ before you run it, not after.
 This role carries the host side of that: the card's firmware (the cloud images
 ship none), `uinput`, a rootful container socket, the seat store, and the
 engine as a system unit. It installs no apps — what a person may run is a
-catalogue, projected through the engine's own API, because the engine
-re-serialises its config file itself and a templated one would not survive.
+catalogue, written into the engine's own config file just before the engine
+reads it (below: why not its API).
 
 Three things worth knowing before you change anything:
 
@@ -28,17 +28,26 @@ Three things worth knowing before you change anything:
   running both must move one of them; every port here has its own environment
   variable, and the engine advertises whatever it was given.
 
-* **The catalogue is projected, never templated.** The engine rewrites its
-  own config file, so what may exist is handed in as data
-  (`arcade_wolf_apps`, `arcade_wolf_apps_absent`), written to
-  `/etc/wolf/catalogue.json`, and a oneshot unit projects it through the
-  engine's API every time the engine starts — add what is missing, replace
-  what differs, remove what is named absent, and leave the rest alone, because
-  an app a person added is theirs. A seat's ceiling travels inside its app
-  definition as the container engine's own `HostConfig` (`NanoCpus`,
-  `Memory`); an app that runs its own sandbox inside the seat (a Flatpak,
-  Steam) needs the wider capability set — both sets are in
-  `arcade_wolf_host_config`, for whoever renders the definitions.
+* **The catalogue lands in the engine's config before the engine starts —
+  not through its API.** The engine computes a tile's video caps only when it
+  reads its config file; an app added through the API is saved to that file
+  at once but lives in memory with an *empty* caps until the next start, and
+  such a tile shows in Moonlight and never sends a frame (the client blames a
+  firewall). So what may exist is handed in as data (`arcade_wolf_apps`,
+  `arcade_wolf_apps_absent`), written to `/etc/wolf/catalogue.json`, and
+  `wolf-catalogue project` rewrites the Moonlight profile's app list in
+  `config.toml` as the engine's own unit starts (`ExecStartPre`) — add what
+  is missing, replace what differs, remove what is named absent, leave the
+  rest alone (a person's own addition is theirs), touch nothing else in the
+  file, and keep the previous file whenever the rewrite reads back wrong. A
+  converge pushes nothing: `wolf-catalogue diff` reads what the engine *has*,
+  and a difference restarts the engine only when no session is live —
+  otherwise it is deferred, said in the play and in the journal, and lands at
+  the next start. A seat's ceiling travels inside its app definition as the
+  container engine's own `HostConfig` (`NanoCpus`, `Memory`); an app that
+  runs its own sandbox inside the seat (a Flatpak, Steam) needs the wider
+  capability set — both sets are in `arcade_wolf_host_config`, for whoever
+  renders the definitions.
 
 * **A person's state is copied, not mounted.** The seat home is local so
   that play never touches the network, whatever the app writes and however

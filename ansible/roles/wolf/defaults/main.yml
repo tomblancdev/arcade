@@ -82,7 +82,7 @@ arcade_wolf_extra_env: {}
 # neither flavour — so it is installed here; that works only because this
 # guest kept an emulated display and can therefore boot without its card.
 arcade_wolf_firmware_packages: [firmware-amd-graphics]
-arcade_wolf_packages: [podman, xfsprogs, qemu-guest-agent, uidmap, nfs-common, curl, jq, rsync]
+arcade_wolf_packages: [podman, xfsprogs, qemu-guest-agent, uidmap, nfs-common, curl, jq, rsync, python3-tomlkit]   # tomlkit: wolf-catalogue rewrites one block of the engine's own TOML, the rest byte for byte
 
 # --- what every seat can see -----------------------------------------------
 # Shared content: a ROM store, an emulation kit — one copy, mounted read-only,
@@ -105,17 +105,24 @@ arcade_wolf_mount_options:
 # default, here for the host that needs it.
 arcade_wolf_hide_virtual_pads: false
 
-# --- the catalogue: what may exist, projected onto the engine --------------
-# The engine keeps its own config file and rewrites it itself, so nothing is
-# templated into it. What MAY exist is written here as data, and a oneshot
-# unit projects it through the engine's API every time the engine starts (and
-# at every converge): add what is missing, replace what differs, remove what
-# is named absent — and leave everything else alone, because an app a person
-# added is runtime state and not this role's to purge.
+# --- the catalogue: what may exist, landed in the engine's config ----------
+# The engine computes a tile's video caps ONLY when it reads its config file
+# at start; an app added through its API is saved to that file at once but
+# lives in memory with an empty caps until the next start — and such a tile
+# shows in Moonlight and never sends a frame. So what MAY exist is written
+# here as data, and `wolf-catalogue project` rewrites the Moonlight profile's
+# app list in the engine's own config.toml as the engine's unit starts
+# (ExecStartPre): add what is missing, replace what differs, remove what is
+# named absent — and leave everything else alone, because an app a person
+# added is runtime state and not this role's to purge. Nothing else in the
+# file is touched, and a rewrite that reads back wrong never replaces it.
+# A converge pushes nothing: `wolf-catalogue diff` reads what the engine has,
+# and a difference restarts the engine only when nobody is playing; otherwise
+# it is deferred (the play says so, the journal too) to the next start.
 #
 # apps: the engine's own app shape (title, icon_png_path, runner{type, name,
 # image, mounts, env, devices, ports, base_create_json}) — WITHOUT the
-# pipeline fields, which are copied from an app the engine composed itself.
+# pipeline fields and WITHOUT an id: both are the engine's, computed at load.
 # The seat's ceiling (a class) is expressed in base_create_json as the
 # container engine's own HostConfig (NanoCpus, Memory), rendered by whoever
 # hands this in — a helper for that is arcade_wolf_host_config below.
