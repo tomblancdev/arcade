@@ -391,15 +391,19 @@
           | awk -v p='{{ item.label }}' '$1 == p { print $4 }'
       }
       before=$(read_hard)
-      xfs_quota -x -c 'project -s {{ item.label }}' {{ arcade_wolf_seats }} >/dev/null
+      # -s rescans the tree and warns on symlinks/special files (the shared roms
+      # link, a save special file) - harmless, and noise, so drop its stderr
+      xfs_quota -x -c 'project -s {{ item.label }}' {{ arcade_wolf_seats }} >/dev/null 2>&1
       xfs_quota -x -c 'limit -p bhard={{ item.quota | default(arcade_wolf_default_quota) }} {{ item.label }}' {{ arcade_wolf_seats }}
       after=$(read_hard)
-      [ "$before" = "$after" ] && echo UNCHANGED || echo "CHANGED $before -> $after"
+      # distinct tokens: "UNCHANGED" CONTAINS "CHANGED", so a substring test on
+      # it reports changed forever (the rung-2 bug this replaces)
+      [ "$before" = "$after" ] && echo QUOTA_STEADY || echo "QUOTA_SET $before -> $after"
     executable: /bin/sh
   loop: "{{ arcade_wolf_profiles }}"
   loop_control: { label: "{{ item.label }}: {{ item.quota | default(arcade_wolf_default_quota) }}" }
   register: arcade_wolf_quota
-  changed_when: arcade_wolf_quota.stdout is defined and 'CHANGED' in arcade_wolf_quota.stdout
+  changed_when: arcade_wolf_quota.stdout is defined and 'QUOTA_SET' in arcade_wolf_quota.stdout
   when: arcade_wolf_data_device != ''
 
 # --- the engine -------------------------------------------------------------
