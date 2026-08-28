@@ -166,20 +166,33 @@ arcade_wolf_apps_absent: []
 #  - Test ball
 arcade_wolf_catalogue_file: /etc/wolf/catalogue.json
 
-# The two HostConfig sets a seat can carry, as the engine's own shipped apps
-# use them. `standard` is what a plain app gets; `nested_sandbox` is the
+# The two HostConfig sets a seat can carry, after the engine's own shipped
+# apps. `standard` is what a plain app gets; `nested_sandbox` is the
 # Steam-grade set — an app that runs its OWN sandbox inside the seat
 # (Steam's pressure-vessel, a Flatpak's bubblewrap) needs SYS_ADMIN and no
 # seccomp/AppArmor profile in the way, or it never starts. Both keep
 # Privileged false and the input cgroup rules the engine's virtual pads need.
+#
+# NOT `IpcMode: host`, which the engine's examples carry. A seat is a
+# person, and host IPC makes every seat share ONE System V namespace and ONE
+# /dev/shm: Steam keys its semaphores by fixed numbers and guards them 0600,
+# so the first uid to run it locks every other uid out ("Assertion Failed:
+# Permission denied", then a deadlock on a grey screen — found with the
+# second person, 2026-08-28); a killed seat never removes them; and its
+# Chromium left 2 GB of 777 shm files on a RAM tmpfs that any other seat
+# could read. A private namespace per seat ends all three. Audio does not
+# need the shared one: the seat talks to the engine's PulseAudio over its
+# unix socket with memfd (both sides ≥ PA 10). What a private /dev/shm
+# needs is a SIZE — the engine's default 64 MiB starves a browser-based
+# launcher — so each set says one; it is a ceiling, RAM is used as touched.
 arcade_wolf_host_config:
   standard:
-    IpcMode: host
+    ShmSize: 1073741824       # 1 GiB
     Privileged: false
     CapAdd: [NET_RAW, MKNOD, NET_ADMIN, SYS_ADMIN, SYS_NICE]
     DeviceCgroupRules: ["c 13:* rmw", "c 244:* rmw"]
   nested_sandbox:
-    IpcMode: host
+    ShmSize: 2147483648       # 2 GiB: Steam's CEF alone left 2 GB in a day
     Privileged: false
     CapAdd: [SYS_ADMIN, SYS_NICE, SYS_PTRACE, NET_RAW, MKNOD, NET_ADMIN]
     # THE nested-sandbox unlock, and it must be `unmask=all`, NOT empty
