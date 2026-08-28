@@ -12,8 +12,9 @@
 # subscribes to sway's window events and re-asserts fullscreen on every
 # window that is not the launcher's own — the launcher stays windowed on
 # purpose (its dialogs, a launch-option question, must stay reachable), and
-# its bar is hidden at runtime instead (a `bar` block in an included config
-# would fight the image's own one-liner).
+# its bar is ended at runtime instead (a `bar` block in an included config
+# would fight the image's own one-liner, and waybar keeps its exclusive zone
+# even when told to be invisible).
 #
 # Started by sway itself (`exec` from /etc/sway/config.d, mounted read-only
 # by the catalogue line), so SWAYSOCK is set. Needs swaymsg + jq, both in
@@ -22,11 +23,28 @@
 : "${SWAY_FULLSCREEN_EXCLUDE:=^steam$}"
 export SWAY_FULLSCREEN_EXCLUDE
 
-for b in $(swaymsg -t get_bar_config 2>/dev/null | jq -r '.[]'); do
-  swaymsg bar "$b" mode invisible >/dev/null 2>&1
+# THE BAR. sway runs a config `exec` while it is still parsing the config,
+# before the `bar` line — and `bar … mode invisible` is not enough anyway:
+# waybar keeps its exclusive zone when told to be invisible (its own docs call
+# that mode "not recommended"), so the window still stopped 37 px short of
+# the top (read live in sway's tree, 2026-08-28). The bar nobody asked for is
+# a process; ending it releases the zone and sway does not respawn it. Wait
+# for it to exist, end it, and check again on every new window.
+no_bar() {
+  pkill -x waybar >/dev/null 2>&1
+  for b in $(swaymsg -t get_bar_config 2>/dev/null | jq -r '.[]?'); do
+    swaymsg bar "$b" mode invisible >/dev/null 2>&1
+  done
+}
+i=0
+while [ "$i" -lt 60 ]; do
+  pgrep -x waybar >/dev/null 2>&1 && break
+  i=$((i+1)); sleep 0.5
 done
+no_bar
 
 swaymsg -t subscribe -m '["window"]' | while read -r ev; do
+  case "$ev" in *'"change": "new"'*|*'"change":"new"'*) no_bar ;; esac
   id=$(printf '%s' "$ev" | jq -r '
     select(.change == "new" or .change == "title" or .change == "focus" or .change == "fullscreen_mode")
     | .container | select(.fullscreen_mode == 0)
