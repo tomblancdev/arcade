@@ -70,4 +70,19 @@ Three things worth knowing before you change anything:
   and can never wipe what the mount holds. It logs `OK` per run; watch for
   its absence. One host holds a person's live state at a time.
 
+* **A new person opens a ready app, not a wizard.** Two shapes of *golden
+  template*, both seeded once and never touched again. A whole home
+  (`arcade_wolf_golden_apps`): an app with no headless first run (RetroDECK)
+  has one completed setup captured under `<golden_dir>/<title>` and copied
+  into a seat the first time that home is empty. A **part** of a home
+  (`arcade_wolf_golden_parts`): an app whose first run *is* the person's own
+  (Steam: the login) still has parts that can be a template — a title's
+  Proton prefix. Steam records each install-script step as done inside the
+  prefix's own registry, so a step that hangs under Wine hangs once per
+  drawer; a prefix captured once, with the marks and without the person
+  (`wolf-golden-prefix <profile> <app> <path>`), and seeded before the
+  title's first launch is a first launch that just starts — Proton keeps a
+  prefix it finds. The path must be the app's *real* one: the directories
+  on the way are made for the seat's uid.
+
 Contract: [`defaults/main.yml`](defaults/main.yml).

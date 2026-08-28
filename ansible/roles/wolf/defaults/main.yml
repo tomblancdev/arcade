@@ -246,3 +246,25 @@ arcade_wolf_state_file: /etc/wolf/state.json
 arcade_wolf_golden_dir: "{{ arcade_wolf_state }}/golden"
 arcade_wolf_golden_apps: []
 #  - RetroDECK
+
+# A PART of a home, seeded when that part is absent. For an app whose home
+# cannot be a template because the first run is the person's own (Steam: the
+# login) but which has parts that can — a title's Proton prefix. Steam runs
+# a title's install script at the first launch after an install and records
+# each step as done INSIDE THE PREFIX'S OWN REGISTRY
+# (HKLM\Software\Valve\Steam\Apps\<appid>: <step>=1 — the Steamworks
+# HasRunKey rule), so a step that hangs under Wine hangs once per PREFIX,
+# i.e. once per drawer (Arkham City's 2007 AMD Dual-Core Optimizer: 13
+# minutes, in every fresh drawer, 2026-08-28). Proton keeps a prefix it
+# finds — it copies its defaults only where pfx/user.reg is missing and
+# deletes only on a downgrade (its own script) — so a prefix captured once,
+# with the marks and without the person (`wolf-golden-prefix`), seeded
+# before the title's first launch, is a first launch that just starts. Each
+# entry: the app title and the path INSIDE its home, both as the seat sees
+# them; the template lives at <arcade_wolf_golden_dir>/<app>/<path>. Every
+# directory on the way that is missing is made for the seat's uid — so the
+# path must be the app's REAL one (read it in a seat home: Steam's is
+# `.steam/steam/…`, a real directory the image lays out). Seeded
+# once, when absent; a person's own prefix is never touched.
+arcade_wolf_golden_parts: []
+#  - { app: Steam, path: .steam/steam/steamapps/compatdata/200260 }

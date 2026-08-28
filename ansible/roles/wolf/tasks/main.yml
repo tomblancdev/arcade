@@ -384,6 +384,41 @@
   loop_control: { label: "{{ item.0.label }} <- {{ item.1 }}" }
   when: arcade_wolf_data_device != '' and arcade_wolf_golden_apps | length > 0
 
+# A part of a home — a title's Proton prefix — seeded when that part is
+# absent, whatever else the home holds (defaults/main.yml: why a prefix, and
+# why the real path). The directories on the way are made for the seat's
+# uid, never root's: a root-owned parent is a home the app cannot write.
+- name: "Seed a part of a profile's app home from the golden template (once, when that part is absent)"
+  ansible.builtin.shell:
+    cmd: |
+      set -eu
+      dest={{ (arcade_wolf_seats ~ '/' ~ item.0.id ~ '/' ~ item.1.app ~ '/' ~ item.1.path) | quote }}
+      tmpl={{ (arcade_wolf_golden_dir ~ '/' ~ item.1.app ~ '/' ~ item.1.path) | quote }}
+      [ -d "$tmpl" ] || { echo NO_TEMPLATE; exit 0; }
+      [ -e "$dest" ] && { echo EXISTS; exit 0; }
+      uid={{ item.0.uid | default(arcade_wolf_run_uid) }}; gid={{ arcade_wolf_run_gid }}
+      d=$(dirname "$dest"); missing=""
+      while [ ! -d "$d" ]; do missing="$d $missing"; d=$(dirname "$d"); done
+      for m in $missing; do mkdir "$m" && chown "$uid:$gid" "$m"; done
+      mkdir "$dest" && cp -a "$tmpl/." "$dest/"
+      chown -R "$uid:$gid" "$dest"
+      echo SEEDED
+    executable: /bin/sh
+  register: arcade_wolf_seed_part
+  changed_when: "'SEEDED' in arcade_wolf_seed_part.stdout"
+  loop: "{{ arcade_wolf_profiles | product(arcade_wolf_golden_parts) | list }}"
+  loop_control: { label: "{{ item.0.label }} <- {{ item.1.app }}/{{ item.1.path }}" }
+  when: arcade_wolf_data_device != '' and arcade_wolf_golden_parts | length > 0
+
+# The capture: a title's prefix, from a drawer that got through its first
+# launch, minus the person — into the golden template. A command an admin
+# runs once per title, on this host; what it strips and prints is in it.
+- name: "The capture of a title's prefix into the golden template (wolf-golden-prefix)"
+  ansible.builtin.template:
+    src: wolf-golden-prefix.j2
+    dest: /usr/local/sbin/wolf-golden-prefix
+    mode: "0755"
+
 - name: The project register (a quota is keyed on a directory, by id)
   ansible.builtin.copy:
     dest: "{{ item.dest }}"

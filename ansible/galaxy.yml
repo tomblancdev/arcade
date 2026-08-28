@@ -6,7 +6,7 @@
 #       version: v0.2.0
 namespace: tomblancdev
 name: arcade
-version: 0.10.2
+version: 0.11.0
 readme: README.md
 authors:
   - Tom Blanc <dev@tomblanc.fr>   # no-environment: ok — the author, not a network

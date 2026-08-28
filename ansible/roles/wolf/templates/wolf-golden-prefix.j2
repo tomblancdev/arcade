@@ -1,0 +1,63 @@
+#!/bin/sh
+# wolf-golden-prefix — capture a title's Proton prefix from a drawer as the
+# golden template every drawer is seeded with (arcade_wolf_golden_parts).
+# Rendered by ansible (tomblancdev.arcade.wolf): the paths are the role's.
+#
+# WHY A PREFIX. Steam runs a title's install script at the first launch after
+# an install and records each step as done in the prefix's own registry
+# (HKLM\Software\Valve\Steam\Apps\<appid>: <step>=1), so a step that hangs
+# under Wine hangs once per prefix — once per drawer. A prefix that already
+# carries the marks is a first launch that just starts, and Proton keeps a
+# prefix it finds (defaults/main.yml).
+#
+# WHAT IS STRIPPED — the person's part, never the title's:
+#   pfx/drive_c/users/**      every FILE (the directories stay): the title's
+#       settings and non-Cloud saves (Documents, Saved Games, AppData), DXVK's
+#       state caches, the MSI copies the installers cached
+#   pfx/*.old, pfx/*.tmp      Wine's working copies of the registry
+# WHAT IS KEPT: version, tracked_files, config_info, the registry (system.reg
+# with the marks; user.reg — without it Proton lays its defaults over the
+# prefix, marks included), drive_c minus the above. The MachineGuid travels
+# with the prefix: every drawer seeded from it shows a title the same
+# machine — fine for a house; re-capture from another drawer if a title minds.
+# WHAT IS PRINTED FOR REVIEW: the marks (the steps Steam will skip) and any
+# HKCU key under Software\ that is neither Wine's, Microsoft's nor Valve's —
+# a title's own settings, kept in the template unless stripped by hand.
+#
+# usage: wolf-golden-prefix <profile id> <app title> <path inside the home>
+#   e.g. wolf-golden-prefix salon Steam .steam/steam/steamapps/compatdata/200260
+# Refuses: a path that is not a Proton prefix; a prefix in use (Proton holds
+# pfx.lock while the title runs); a template already captured (remove it to
+# re-capture). One line to the journal per run (tag wolf-golden-prefix).
+set -eu
+seats={{ arcade_wolf_seats | quote }}
+golden={{ arcade_wolf_golden_dir | quote }}
+tag=wolf-golden-prefix
+die() { echo "$tag: REFUSED — $*" >&2; logger -t "$tag" "REFUSED — $*"; exit 1; }
+[ $# -eq 3 ] || { echo "usage: $tag <profile id> <app title> <path inside the home>" >&2; exit 2; }
+id=$1; app=$2; path=$3
+src="$seats/$id/$app/$path"; dst="$golden/$app/$path"
+[ -d "$src" ] || die "$src: no such directory"
+[ -f "$src/version" ] && [ -f "$src/pfx/user.reg" ] && [ -f "$src/pfx/system.reg" ] \
+  || die "$src is not a Proton prefix (version, pfx/user.reg, pfx/system.reg)"
+if [ -e "$src/pfx.lock" ]; then
+  flock -n "$src/pfx.lock" true || die "$src is in use (pfx.lock held: the title is running)"
+fi
+[ -e "$dst" ] && die "$dst already captured — remove it to re-capture"
+appid=$(basename "$path")
+
+tmp="$dst.capturing"; rm -rf "$tmp"; mkdir -p "$(dirname "$tmp")"
+cp -a "$src/." "$tmp/"
+[ -d "$tmp/pfx/drive_c/users" ] && find "$tmp/pfx/drive_c/users" -type f -delete
+rm -f "$tmp"/pfx/*.old "$tmp"/pfx/*.tmp
+chown -R root:root "$tmp"      # ownership is the seed's to set, per drawer
+mv "$tmp" "$dst"
+
+size=$(du -sh "$dst" | cut -f1)
+marks=$(PAT="Valve\\\\Steam\\\\Apps\\\\$appid]" awk 'index($0, ENVIRON["PAT"]) {p=1; next} p && /^$/ {p=0} p && /=dword/ {print}' \
+        "$dst/pfx/system.reg" | tr -d '"' | sort -u | tr '\n' ' ')
+hkcu=$(grep -o '^\[Software\\\\[^\\]*' "$dst/pfx/user.reg" | sort -u \
+       | grep -v -F -e 'Software\\Wine' -e 'Software\\Microsoft' -e 'Software\\Valve' -e 'Software\\Classes' | tr -d '[' | tr '\n' ' ' || true)
+echo "$tag: captured $app/$path from $id — $size; steps Steam will skip: ${marks:-none found}"
+[ -n "$hkcu" ] && echo "$tag: review — the title's own HKCU keys kept in the template: $hkcu"
+logger -t "$tag" "captured $app/$path from $id — $size; marks: ${marks:-none}; hkcu: ${hkcu:-none}"
