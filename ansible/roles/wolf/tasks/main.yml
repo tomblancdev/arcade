@@ -607,7 +607,9 @@
   register: arcade_wolf_api_proof
   retries: 6
   delay: 5
-  until: arcade_wolf_api_proof.status == 200 and (arcade_wolf_api_proof.json.success | default(false))
+  # the engine answers JSON without saying so (no content-type), so `.json`
+  # is never filled in - read the body
+  until: arcade_wolf_api_proof.status == 200 and '"success":true' in (arcade_wolf_api_proof.content | default(''))
   changed_when: false
   when: arcade_wolf_api_listen != ''
 
