@@ -1,0 +1,28 @@
+#!/bin/bash
+# seat-kiosk — a browser seat: one page, full screen, and the seat tells the
+# page who it is.
+#
+# Mounted by a catalogue line over the image's own start script
+# (/opt/gow/startup-app.sh — Wildlife's Firefox has no setting for which
+# page to open). The engine hands every seat two things a hub page needs and
+# nothing else prints: WOLF_SESSION_ID, the seat's own session (the page's
+# whole identity: the panel reads it back from the engine and joins it to
+# the drawer the device is pointed at), and WOLF_VIDEO_BUFFER_CAPS, the
+# video buffer caps the engine computed at its start — a room opened from
+# this seat is made with them, and a room made without them streams nothing
+# (the same hole as an API-added tile). The caps hold spaces and
+# parentheses, so they ride base64url.
+#
+# SEAT_KIOSK_URL names the page (a catalogue `env` line); SEAT_KIOSK_BROWSER
+# the binary (default Firefox's). Runs under whatever compositor the seat
+# was given — none is fine: Firefox speaks Wayland to the engine's own.
+set -e
+source /opt/gow/launch-comp.sh
+
+url="${SEAT_KIOSK_URL:?SEAT_KIOSK_URL names the page this seat shows}"
+caps=$(printf '%s' "${WOLF_VIDEO_BUFFER_CAPS:-}" | base64 -w0 | tr '+/' '-_' | tr -d '=')
+sep='?'; case "$url" in *\?*) sep='&' ;; esac
+
+export MOZ_ENABLE_WAYLAND="${MOZ_ENABLE_WAYLAND:-1}"
+launcher "${SEAT_KIOSK_BROWSER:-/usr/bin/firefox}" --kiosk --no-remote \
+  "${url}${sep}session=${WOLF_SESSION_ID}&caps=${caps}"

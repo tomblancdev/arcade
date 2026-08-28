@@ -548,16 +548,19 @@
 # people's homes (a mount inside a home would leave root-owned directories in
 # a fresh one). Today: the sway fullscreen watcher for a launcher seat — a
 # game's window kept fullscreen and the bar hidden (the script says why a
-# for_window rule is not enough). A line that wants it mounts
+# for_window rule is not enough) — and the kiosk start for a browser seat
+# (a hub page in the stream: the seat's own session id and video caps
+# appended to the page's URL). A line that wants one mounts
 #   /etc/wolf/seat/seat-sway-fullscreen.conf:/etc/sway/config.d/90-seat.conf:ro
 #   /etc/wolf/seat/seat-sway-fullscreen:/usr/local/bin/seat-sway-fullscreen:ro
+#   /etc/wolf/seat/seat-kiosk:/opt/gow/startup-app.sh:ro   (+ env SEAT_KIOSK_URL=…)
 - name: The directory of what the host lends a seat
   ansible.builtin.file:
     path: /etc/wolf/seat
     state: directory
     mode: "0755"
 
-- name: "The sway fullscreen watcher (a launcher seat: games fullscreen, no bar)"
+- name: "What the host lends a seat (the sway watcher, the kiosk start)"
   ansible.builtin.copy:
     src: "{{ item.name }}"
     dest: "/etc/wolf/seat/{{ item.name }}"
@@ -565,6 +568,7 @@
   loop:
     - { name: seat-sway-fullscreen, mode: "0755" }
     - { name: seat-sway-fullscreen.conf, mode: "0644" }
+    - { name: seat-kiosk, mode: "0755" }
   loop_control: { label: "{{ item.name }}" }
 
 # --- the images -------------------------------------------------------------

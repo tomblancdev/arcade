@@ -58,7 +58,12 @@ Three things worth knowing before you change anything:
   `/etc/sway/config.d/`) — for a launcher seat under sway, the bar hidden
   and every game window *kept* fullscreen: the image's own `for_window` rule
   fires once at map, and Wine drops the hint whenever its window is smaller
-  than the screen, leaving the game tiled next to its launcher.
+  than the screen, leaving the game tiled next to its launcher. And
+  `seat-kiosk` — for a **browser seat** (a hub page in the stream): mounted
+  over the image's `/opt/gow/startup-app.sh`, it opens `SEAT_KIOSK_URL` in a
+  kiosk with the seat's own `WOLF_SESSION_ID` and `WOLF_VIDEO_BUFFER_CAPS`
+  (base64url) appended — the two things the engine hands a seat that a page
+  needs to know who it is and to open a room the engine can stream.
 
 * **A person's state is copied, not mounted.** The seat home is local so
   that play never touches the network, whatever the app writes and however
