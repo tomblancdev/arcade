@@ -1,0 +1,36 @@
+#!/bin/sh
+# seat-sway-fullscreen — a launcher seat under sway: no bar, and every game
+# window KEPT fullscreen.
+#
+# WHY A WATCHER AND NOT A RULE. The seat image's sway config already says
+# `for_window [class="steam_app_.*"] fullscreen enabled` — and a for_window
+# rule fires ONCE, when the window is mapped. Wine then drops the fullscreen
+# hint by itself whenever its window is smaller than the screen (a game saved
+# at 1920x1080 on a 2560x1440 stream), and the game ends up TILED next to its
+# launcher, half the screen each (seen live, 2026-08-28). Re-asserting it
+# makes the window the size of the screen, after which Wine keeps it. So this
+# subscribes to sway's window events and re-asserts fullscreen on every
+# window that is not the launcher's own — the launcher stays windowed on
+# purpose (its dialogs, a launch-option question, must stay reachable), and
+# its bar is hidden at runtime instead (a `bar` block in an included config
+# would fight the image's own one-liner).
+#
+# Started by sway itself (`exec` from /etc/sway/config.d, mounted read-only
+# by the catalogue line), so SWAYSOCK is set. Needs swaymsg + jq, both in
+# the image. SWAY_FULLSCREEN_EXCLUDE (a regex on class/app_id, default the
+# launcher's `^steam$`) names what is left alone.
+: "${SWAY_FULLSCREEN_EXCLUDE:=^steam$}"
+export SWAY_FULLSCREEN_EXCLUDE
+
+for b in $(swaymsg -t get_bar_config 2>/dev/null | jq -r '.[]'); do
+  swaymsg bar "$b" mode invisible >/dev/null 2>&1
+done
+
+swaymsg -t subscribe -m '["window"]' | while read -r ev; do
+  id=$(printf '%s' "$ev" | jq -r '
+    select(.change == "new" or .change == "title" or .change == "focus" or .change == "fullscreen_mode")
+    | .container | select(.fullscreen_mode == 0)
+    | select((((.window_properties.class // .app_id) // "") | test(env.SWAY_FULLSCREEN_EXCLUDE; "i")) | not)
+    | .id' 2>/dev/null)
+  [ -n "$id" ] && swaymsg "[con_id=$id] fullscreen enable" >/dev/null 2>&1
+done

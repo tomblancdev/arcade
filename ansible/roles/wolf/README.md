@@ -52,6 +52,14 @@ Three things worth knowing before you change anything:
   a pull, and a rebuilt host carries its tiles before anyone tries one. Present,
   never pruned: an image the catalogue does not name may be a person's own.
 
+* **What the host lends a seat.** Read-only files under `/etc/wolf/seat/`
+  that a catalogue line may mount into its seats, kept outside the people's
+  homes. Today: `seat-sway-fullscreen` (+ its `.conf` for
+  `/etc/sway/config.d/`) — for a launcher seat under sway, the bar hidden
+  and every game window *kept* fullscreen: the image's own `for_window` rule
+  fires once at map, and Wine drops the hint whenever its window is smaller
+  than the screen, leaving the game tiled next to its launcher.
+
 * **A person's state is copied, not mounted.** The seat home is local so
   that play never touches the network, whatever the app writes and however
   often; the folders an app declares as state (`arcade_wolf_state_apps`) are

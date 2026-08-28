@@ -505,6 +505,30 @@
     content: "{{ {'apps': arcade_wolf_apps, 'absent': arcade_wolf_apps_absent} | to_nice_json }}\n"
     mode: "0644"
 
+# --- what the host lends a seat --------------------------------------------
+# Read-only files a catalogue line may mount into its seats, kept OUTSIDE the
+# people's homes (a mount inside a home would leave root-owned directories in
+# a fresh one). Today: the sway fullscreen watcher for a launcher seat — a
+# game's window kept fullscreen and the bar hidden (the script says why a
+# for_window rule is not enough). A line that wants it mounts
+#   /etc/wolf/seat/seat-sway-fullscreen.conf:/etc/sway/config.d/90-seat.conf:ro
+#   /etc/wolf/seat/seat-sway-fullscreen:/usr/local/bin/seat-sway-fullscreen:ro
+- name: The directory of what the host lends a seat
+  ansible.builtin.file:
+    path: /etc/wolf/seat
+    state: directory
+    mode: "0755"
+
+- name: "The sway fullscreen watcher (a launcher seat: games fullscreen, no bar)"
+  ansible.builtin.copy:
+    src: "{{ item.name }}"
+    dest: "/etc/wolf/seat/{{ item.name }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { name: seat-sway-fullscreen, mode: "0755" }
+    - { name: seat-sway-fullscreen.conf, mode: "0644" }
+  loop_control: { label: "{{ item.name }}" }
+
 # --- the images -------------------------------------------------------------
 # Every tile's image is on this host before anyone taps the tile. Left to the
 # engine, a missing image is pulled at the FIRST LAUNCH — with the client
