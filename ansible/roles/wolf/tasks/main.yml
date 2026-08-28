@@ -313,13 +313,16 @@
   loop_control: { label: "{{ item.path }} ({{ item.mode }}: {{ item.src }})" }
 
 # --- the caps ---------------------------------------------------------------
-- name: Each profile's directory
+# A drawer is its owner's alone: 0700, not the group's. Every seat carries the
+# same gid, so a group-readable drawer would let one person's seat read
+# another's saves and login tokens.
+- name: "Each profile's directory (a drawer: its uid's alone)"
   ansible.builtin.file:
     path: "{{ arcade_wolf_seats }}/{{ item.id }}"
     state: directory
     owner: "{{ item.uid | default(arcade_wolf_run_uid) }}"
     group: "{{ arcade_wolf_run_group }}"
-    mode: "0750"
+    mode: "0700"
   loop: "{{ arcade_wolf_profiles }}"
   loop_control: { label: "{{ item.label }} ({{ item.id }})" }
 
@@ -575,6 +578,54 @@
 
 - name: Flush (the engine is up before anything asks it a question)
   ansible.builtin.meta: flush_handlers
+
+# --- the API bridge: the engine's socket, lent to one host ------------------
+# Socket-activated: systemd holds the port, the proxy is started by the first
+# connection and leaves when idle. The API has no auth; the row to this port
+# is the lock (defaults/main.yml).
+- name: "The API bridge's units (a socket on one address, a proxy to the engine's own)"
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    mode: "0644"
+  loop: [wolf-api.socket, wolf-api.service]
+  register: arcade_wolf_api_units
+  when: arcade_wolf_api_listen != ''
+
+- name: The bridge listens (the proxy itself starts at the first connection)
+  ansible.builtin.systemd:
+    name: wolf-api.socket
+    enabled: true
+    state: "{{ 'restarted' if arcade_wolf_api_units is changed else 'started' }}"
+    daemon_reload: true
+  when: arcade_wolf_api_listen != ''
+
+- name: "Proof — the engine answers through the bridge"
+  ansible.builtin.uri:
+    url: "http://{{ arcade_wolf_api_listen }}/api/v1/apps"
+    return_content: true
+  register: arcade_wolf_api_proof
+  retries: 6
+  delay: 5
+  until: arcade_wolf_api_proof.status == 200 and (arcade_wolf_api_proof.json.success | default(false))
+  changed_when: false
+  when: arcade_wolf_api_listen != ''
+
+- name: "…and no bridge where none is wanted"
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: false
+    state: stopped
+  loop: [wolf-api.socket, wolf-api.service]
+  failed_when: false
+  when: arcade_wolf_api_listen == ''
+
+- name: …its units gone too
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ item }}"
+    state: absent
+  loop: [wolf-api.socket, wolf-api.service]
+  when: arcade_wolf_api_listen == ''
 
 # --- the catalogue: has it landed? -----------------------------------------
 # A converge pushes nothing through the API (a tile the engine did not read

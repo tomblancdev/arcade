@@ -44,19 +44,40 @@ arcade_wolf_data_device: ""
 arcade_wolf_data_fs_opts: "rw,noatime,prjquota"
 
 # --- who may use how much --------------------------------------------------
-# A profile is a person: the id is the engine's (it mints one at pairing), the
-# label is what a human reads, the quota is their cap. Empty until identity
-# lands — the machinery exists so that adding a person is a line of data.
+# A profile is a DRAWER with a name. `id` is the folder the engine's paired
+# clients are pointed at (its `app_state_folder` — ours to choose; the hash
+# the engine mints at pairing is what a client wears until somebody points
+# it at a drawer). `label` is what a human and the quota report read. `uid`
+# is the account every seat opened from that drawer runs as — its own, and
+# STABLE: the files are owned by it, so a person is never renumbered. `quota`
+# is their cap. `shared: true` marks a drawer with no person behind it (a
+# living-room device everybody uses); it means nothing to this role — a
+# panel decides who may point a device at it. Empty = no drawers; the
+# machinery exists so that adding a person is a line of data.
 arcade_wolf_profiles: []
-#  - { id: "1234567890123456789", label: someone, quota: 150g }
+#  - { id: someone, label: someone, uid: 3001, quota: 150g }
+#  - { id: salon,   label: salon,   uid: 3100, shared: true }
 arcade_wolf_default_quota: "100g"
 
-# The uid a seat runs as until its own is set (the engine writes it per client
-# at pairing). Deliberately NOT 1000: on a desktop-derived host 1000 is a real
-# interactive account, and seats inheriting it was a fault found the hard way.
+# The uid a seat runs as when its profile line names none — and the uid the
+# ENGINE gives a client nobody has pointed at a drawer yet. Deliberately NOT
+# 1000: on a desktop-derived host 1000 is a real interactive account, and
+# seats inheriting it was a fault found the hard way.
 arcade_wolf_run_uid: 3000
 arcade_wolf_run_gid: 3000
 arcade_wolf_run_group: seats
+
+# --- the API bridge --------------------------------------------------------
+# The engine's API lives on a unix socket (<runtime>/wolf.sock) and carries
+# NO authentication of its own: whoever reaches it can pair a client, point
+# it at any drawer, stop any session. A panel on another host needs exactly
+# that, so this lends the socket out on ONE address:port through systemd's
+# socket proxy — socket-activated (nothing runs until a first connection,
+# the proxy leaves when idle) — and the firewall row that lets exactly one
+# host reach this port IS the authentication. "" = no bridge.
+arcade_wolf_api_listen: ""
+#  e.g. "203.0.113.23:47900"   — the guest's own address, never 0.0.0.0
+arcade_wolf_api_idle: 60       # seconds the proxy lingers after its last connection
 
 # --- the doors -------------------------------------------------------------
 # Upstream's defaults. They are also Sunshine's defaults, on purpose — same

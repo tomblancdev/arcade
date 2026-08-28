@@ -1,0 +1,11 @@
+# Managed by ansible (tomblancdev.wolf) — the bridge behind wolf-api.socket:
+# every connection on the lent port is carried to the engine's own unix
+# socket, byte for byte. Leaves on its own once idle.
+[Unit]
+Description=wolf-api — bridge to the seat engine's unix socket
+Requires=wolf-api.socket
+After=wolf-api.socket wolf.service
+
+[Service]
+ExecStart=/usr/lib/systemd/systemd-socket-proxyd --exit-idle-time={{ arcade_wolf_api_idle }}s {{ arcade_wolf_runtime }}/wolf.sock
+PrivateTmp=yes

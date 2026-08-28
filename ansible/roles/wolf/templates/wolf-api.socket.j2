@@ -1,0 +1,12 @@
+# Managed by ansible (tomblancdev.wolf) — the seat engine's API, lent to one
+# host. The API authenticates nobody: the firewall row that lets exactly one
+# host reach this port is the lock. Socket-activated: systemd holds the port,
+# the proxy (wolf-api.service) is started by the first connection.
+[Unit]
+Description=wolf-api — the seat engine's API on {{ arcade_wolf_api_listen }} (bridge to {{ arcade_wolf_runtime }}/wolf.sock)
+
+[Socket]
+ListenStream={{ arcade_wolf_api_listen }}
+
+[Install]
+WantedBy=sockets.target
