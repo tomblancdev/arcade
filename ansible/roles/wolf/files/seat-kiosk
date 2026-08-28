@@ -14,15 +14,26 @@
 # parentheses, so they ride base64url.
 #
 # SEAT_KIOSK_URL names the page (a catalogue `env` line); SEAT_KIOSK_BROWSER
-# the binary (default Firefox's). Runs under whatever compositor the seat
-# was given — none is fine: Firefox speaks Wayland to the engine's own.
+# the binary (default Firefox's). Runs under the compositor the seat was
+# given. Under SWAY (the one that works: bare on the engine's compositor,
+# Firefox's fullscreen request is not granted and the page sits in a
+# window — seen 2026-08-28) the launcher writes the command into sway's
+# config as an `exec` line that sway hands to `sh -c`, so the URL — it holds
+# `&` — is passed single-quoted, or the shell backgrounds the browser at the
+# ampersand and runs the rest as a command. Pair it with the sway
+# fullscreen watcher (seat-sway-fullscreen), which ends the bar and keeps
+# the browser's window fullscreen.
 set -e
 source /opt/gow/launch-comp.sh
 
 url="${SEAT_KIOSK_URL:?SEAT_KIOSK_URL names the page this seat shows}"
 caps=$(printf '%s' "${WOLF_VIDEO_BUFFER_CAPS:-}" | base64 -w0 | tr '+/' '-_' | tr -d '=')
 sep='?'; case "$url" in *\?*) sep='&' ;; esac
+full="${url}${sep}session=${WOLF_SESSION_ID}&caps=${caps}"
 
 export MOZ_ENABLE_WAYLAND="${MOZ_ENABLE_WAYLAND:-1}"
-launcher "${SEAT_KIOSK_BROWSER:-/usr/bin/firefox}" --kiosk --no-remote \
-  "${url}${sep}session=${WOLF_SESSION_ID}&caps=${caps}"
+if [ -n "$RUN_SWAY" ]; then
+  launcher "${SEAT_KIOSK_BROWSER:-/usr/bin/firefox}" --kiosk --no-remote "'${full}'"
+else
+  launcher "${SEAT_KIOSK_BROWSER:-/usr/bin/firefox}" --kiosk --no-remote "${full}"
+fi
