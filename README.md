@@ -60,7 +60,7 @@ platform — the bricks below are the contract between the two.
 | G2 | the panel — which grew a roadmap of its own and left: [Dejarik](https://github.com/tomblancdev/dejarik). The `doorman` role and the `doorman-ct` module were contracts for an app that now lives elsewhere, and were removed in `v0.4.0` | **done, elsewhere** |
 | G3 | the first dedicated server: role `servers`, module `servers-vm` | next |
 | G4 | the public flip: DynHost, the WAN rows, leases through Le Videur | |
-| G5 | the seats: module `appliance-vm` and role `wolf` (the engine on a minimal host, a quota'd seat store, the catalogue projected through the engine's API); the RetroDECK seat image is its own product — [La Borne](https://github.com/tomblancdev/borne) | **rungs 2–3 done** |
+| G5 | the seats: module `appliance-vm` and role `wolf` (the engine on a minimal host, a quota'd seat store, the catalogue written into the engine's config before it starts, its images pulled at converge); the RetroDECK seat image is its own product — [La Borne](https://github.com/tomblancdev/borne) | **rungs 2–3 done** |
 
 ## Develop
 

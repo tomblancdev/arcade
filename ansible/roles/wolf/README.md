@@ -47,7 +47,10 @@ Three things worth knowing before you change anything:
   container engine's own `HostConfig` (`NanoCpus`, `Memory`); an app that
   runs its own sandbox inside the seat (a Flatpak, Steam) needs the wider
   capability set — both sets are in `arcade_wolf_host_config`, for whoever
-  renders the definitions.
+  renders the definitions. Every image the catalogue names is pulled by the
+  converge, before the engine is (re)started — the first tap never waits on
+  a pull, and a rebuilt host carries its tiles before anyone tries one. Present,
+  never pruned: an image the catalogue does not name may be a person's own.
 
 * **A person's state is copied, not mounted.** The seat home is local so
   that play never touches the network, whatever the app writes and however

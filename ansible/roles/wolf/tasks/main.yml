@@ -505,6 +505,21 @@
     content: "{{ {'apps': arcade_wolf_apps, 'absent': arcade_wolf_apps_absent} | to_nice_json }}\n"
     mode: "0644"
 
+# --- the images -------------------------------------------------------------
+# Every tile's image is on this host before anyone taps the tile. Left to the
+# engine, a missing image is pulled at the FIRST LAUNCH — with the client
+# spinning on "starting" for as long as the pull takes, and a rebuilt host
+# offering tiles it cannot yet start. Pulled by the reference the catalogue
+# names (a tag or a digest) and never re-pulled: a moving tag does not move
+# under a running host, and a bump of the line IS the update, as everywhere
+# else in this collection. Only present, never pruned — an image nothing in
+# the catalogue names may be a person's own.
+- name: "The catalogue's images are present (the first tap never waits on a pull)"
+  ansible.builtin.shell: podman image exists {{ item | quote }} || { podman pull -q {{ item | quote }} && echo PULLED; }
+  register: arcade_wolf_pull_result
+  changed_when: "'PULLED' in arcade_wolf_pull_result.stdout"
+  loop: "{{ arcade_wolf_apps | map(attribute='runner') | selectattr('type', 'equalto', 'docker') | map(attribute='image') | unique | list }}"
+
 # --- the engine -------------------------------------------------------------
 - name: "The Quadlet (podman runs it as a system unit: wolf.service)"
   ansible.builtin.template:
