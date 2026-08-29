@@ -479,7 +479,7 @@
       {%- endfor -%}
       {#- a companion's data folder is the drawer's state too: <home> = <dir>/<folder> reads as app <dir>, folder <folder> (v0.14.0) -#}
       {%- set sapps = {} -%}
-      {%- for s in arcade_wolf_sidecars if s.state | default(true) -%}
+      {%- for s in arcade_wolf_sidecars if s.home is defined and s.state | default(true) -%}
       {%-   set _ = sapps.update({(s.home | dirname): (sapps[s.home | dirname] | default([])) + [s.home | basename]}) -%}
       {%- endfor -%}
       {{ {'root': arcade_wolf_state_root, 'seats': arcade_wolf_seats, 'profiles': people, 'apps': arcade_wolf_state_apps | combine(sapps)} | to_nice_json }}
@@ -582,9 +582,10 @@
 # every seat its audio socket and its sink; a second container wearing the
 # three is mixed into the seat — whatever image the seat runs. The register
 # says which companions; the watcher follows the engine's own event feed
-# (start → beside it, died → gone); the link is the once-per-person step
-# that puts the file a companion requires into the drawer, outside every app
-# home. A companion's data folder is state: the register above merges it in.
+# (start → beside it, died → gone) and asks the panel who is linked — a
+# person's grant lives with the person at the gateway, the panel is its
+# broker, the appliance holds nothing. A companion that keeps data of its
+# own names a folder under the drawer; that folder is state (merged above).
 - name: "The companions' register (which, from which image, on which folder of the drawer - data; nothing here is a secret)"
   ansible.builtin.copy:
     dest: "{{ arcade_wolf_sidecars_file }}"
@@ -599,11 +600,10 @@
     mode: "0755"
   register: arcade_wolf_sidecars_script
 
-- name: "The link, once per person (wolf-seat-link <drawer> <name>)"
-  ansible.builtin.template:
-    src: wolf-seat-link.j2
-    dest: /usr/local/sbin/wolf-seat-link
-    mode: "0755"
+- name: "The link by hand is gone (v0.14: a link is a tap on the panel; the appliance holds nothing of a person's)"
+  ansible.builtin.file:
+    path: /usr/local/sbin/wolf-seat-link
+    state: absent
 
 - name: "The companions' images are present (a seat's start never waits on a pull)"
   ansible.builtin.shell: podman image exists {{ item | quote }} || { podman pull -q {{ item | quote }} && echo PULLED; }

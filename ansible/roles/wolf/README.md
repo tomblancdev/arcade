@@ -111,18 +111,19 @@ Three things worth knowing before you change anything:
   never guessed —; the seat dies, they go. A companion runs as the drawer's
   uid with every capability dropped, no device, a memory ceiling, only the
   audio socket lent (never the runtime dir: the engine's API socket lives
-  there and authenticates nobody). Its data is the *drawer's*, outside every
-  app home (`<seats>/<drawer>/<home>`): one link serves every tile, no golden
-  template ever carries it, and it is copied off the box with the person's
-  state. The file a companion requires is made **from a panel**
-  (`arcade_wolf_sidecars_link`): the watcher reports every few seconds which
-  drawers hold it and receives what the panel has pending — a drawer and a
-  short-lived token the person just obtained on their own phone (the
-  companion's image runs its `link` mode with it, as the drawer's uid), or a
-  drawer to unlink; through the row the hub tile already has, the token
-  never on a disk here. `wolf-seat-link <drawer> <name>` is the same step by
-  hand, an admin's. A drawer without the file gets one log line and no
-  container. The first companion: Le Juke, a Spotify Connect receiver —
-  music under whatever the person plays, driven from their phone.
+  there and authenticates nobody), its own `/dev/shm` sized for a browser.
+  **Who is linked is asked of a panel** (`arcade_wolf_sidecars_link`), never
+  kept here: a companion is a person's account beside their seat, the
+  person's grant lives with the person at the identity gateway, and the
+  panel is its broker — the watcher asks every few seconds which drawers
+  are linked to each companion, starts what is missing beside the seats
+  that are open, ends what is no longer linked; a companion asks the panel
+  itself for an hour's token (`token_url`, the drawer filled in). Nothing of
+  a person's is ever on this disk. A companion that keeps data of its own
+  may still name a `home` under the drawer, outside every app home and
+  copied off the box with the person's state. The first companion: Le Juke,
+  a Spotify Connect device (Spotify's own Web Playback SDK in a browser) —
+  music under whatever the person plays, driven from their phone, wherever
+  the phone is.
 
 Contract: [`defaults/main.yml`](defaults/main.yml).
