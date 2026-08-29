@@ -477,7 +477,12 @@
       {%- for p in arcade_wolf_profiles -%}
       {%-   set _ = people.append({'id': p.id, 'uid': p.uid | default(arcade_wolf_run_uid), 'gid': p.gid | default(arcade_wolf_run_gid)}) -%}
       {%- endfor -%}
-      {{ {'root': arcade_wolf_state_root, 'seats': arcade_wolf_seats, 'profiles': people, 'apps': arcade_wolf_state_apps} | to_nice_json }}
+      {#- a companion's data folder is the drawer's state too: <home> = <dir>/<folder> reads as app <dir>, folder <folder> (v0.14.0) -#}
+      {%- set sapps = {} -%}
+      {%- for s in arcade_wolf_sidecars if s.state | default(true) -%}
+      {%-   set _ = sapps.update({(s.home | dirname): (sapps[s.home | dirname] | default([])) + [s.home | basename]}) -%}
+      {%- endfor -%}
+      {{ {'root': arcade_wolf_state_root, 'seats': arcade_wolf_seats, 'profiles': people, 'apps': arcade_wolf_state_apps | combine(sapps)} | to_nice_json }}
     mode: "0644"
   when: arcade_wolf_state_root != ''
 
@@ -570,6 +575,64 @@
     - { name: seat-sway-fullscreen.conf, mode: "0644" }
     - { name: seat-kiosk, mode: "0755" }
   loop_control: { label: "{{ item.name }}" }
+
+# --- the companions: a container beside a seat, for what its image does not
+# carry (wolf-sidecars; v0.14.0) ---------------------------------------------
+# The engine routes a seat's sound by the hostname a stream reports and hands
+# every seat its audio socket and its sink; a second container wearing the
+# three is mixed into the seat — whatever image the seat runs. The register
+# says which companions; the watcher follows the engine's own event feed
+# (start → beside it, died → gone); the link is the once-per-person step
+# that puts the file a companion requires into the drawer, outside every app
+# home. A companion's data folder is state: the register above merges it in.
+- name: "The companions' register (which, from which image, on which folder of the drawer - data; nothing here is a secret)"
+  ansible.builtin.copy:
+    dest: "{{ arcade_wolf_sidecars_file }}"
+    content: "{{ {'seats': arcade_wolf_seats, 'sidecars': arcade_wolf_sidecars} | to_nice_json }}\n"
+    mode: "0644"
+  register: arcade_wolf_sidecars_register
+
+- name: The watcher itself
+  ansible.builtin.copy:
+    src: wolf-sidecars
+    dest: /usr/local/sbin/wolf-sidecars
+    mode: "0755"
+  register: arcade_wolf_sidecars_script
+
+- name: "The link, once per person (wolf-seat-link <drawer> <name>)"
+  ansible.builtin.template:
+    src: wolf-seat-link.j2
+    dest: /usr/local/sbin/wolf-seat-link
+    mode: "0755"
+
+- name: "The companions' images are present (a seat's start never waits on a pull)"
+  ansible.builtin.shell: podman image exists {{ item | quote }} || { podman pull -q {{ item | quote }} && echo PULLED; }
+  register: arcade_wolf_sidecar_pull
+  changed_when: "'PULLED' in arcade_wolf_sidecar_pull.stdout"
+  loop: "{{ arcade_wolf_sidecars | map(attribute='image') | unique | list }}"
+
+- name: The watcher's unit
+  ansible.builtin.template:
+    src: wolf-sidecars.service.j2
+    dest: /etc/systemd/system/wolf-sidecars.service
+    mode: "0644"
+  register: arcade_wolf_sidecars_unit
+
+- name: "The watcher runs (restarted when the register, the script or the unit changed: it reads them once)"
+  ansible.builtin.systemd:
+    name: wolf-sidecars
+    enabled: true
+    state: "{{ 'restarted' if (arcade_wolf_sidecars_register is changed or arcade_wolf_sidecars_script is changed or arcade_wolf_sidecars_unit is changed) else 'started' }}"
+    daemon_reload: true
+  when: arcade_wolf_sidecars | length > 0 and not ansible_check_mode
+
+- name: "…and off where no companion is declared"
+  ansible.builtin.systemd:
+    name: wolf-sidecars
+    enabled: false
+    state: stopped
+  failed_when: false
+  when: arcade_wolf_sidecars | length == 0 and not ansible_check_mode
 
 # --- the images -------------------------------------------------------------
 # Every tile's image is on this host before anyone taps the tile. Left to the

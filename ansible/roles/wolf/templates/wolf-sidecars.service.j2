@@ -1,0 +1,19 @@
+# Managed by ansible (tomblancdev.wolf) — a container beside every seat, for
+# what its image does not carry (see /usr/local/sbin/wolf-sidecars): the
+# register {{ arcade_wolf_sidecars_file }} says which, the engine's own event
+# feed says when. Restarted by systemd if the feed ever ends.
+[Unit]
+Description=wolf-sidecars — a companion container beside every seat
+After=podman.socket wolf.service
+Wants=wolf.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/wolf-sidecars {{ arcade_wolf_sidecars_file }}
+Restart=always
+RestartSec=5
+# a seat always wins: this is bookkeeping on a box whose job is to play
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

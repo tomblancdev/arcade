@@ -1,0 +1,157 @@
+#!/bin/bash
+# wolf-sidecars — a container beside every seat, for what its image does not carry.
+#
+# The engine spawns one container per seat and routes its sound to the
+# session's own sink by the HOSTNAME a stream reports; it also hands every
+# seat the socket of its audio server (PULSE_SERVER) and the name of its sink
+# (PULSE_SINK). So a second container wearing the seat's hostname, socket and
+# sink is mixed into the seat's sound — whatever image the seat runs, and
+# without that image knowing. This watcher starts such companions when a seat
+# starts and removes them when the seat dies: a Spotify receiver today (Le
+# Juke, music under the game, driven from the person's phone); whatever else
+# tomorrow is a line in the register.
+#
+# WHAT A SEAT IS — read from the container engine, never guessed: a container
+# with a bind mount at /home/retro whose source lies under the seat store,
+# <seats>/<drawer>/<app title>. The drawer and the app are that path; the uid
+# and gid the seat runs as are its PUID/PGID; the session is WOLF_SESSION_ID;
+# the hostname is the one the engine's router mapped (the engine sets none,
+# so it is the container id's — which is why it is READ, per seat).
+#
+# A COMPANION runs as the drawer's uid, with every capability dropped and no
+# new privileges, no device, a memory ceiling, ONLY the audio socket lent
+# (read-only: connect needs no write on the file — never the whole runtime
+# dir, which also holds the engine's API socket, and that one authenticates
+# nobody), the drawer's own folder for the companion's data (<seats>/<drawer>/
+# <home>, OUTSIDE every app home: a golden template can never carry it, and
+# one link serves every tile), and the seat's hostname. It is labelled with
+# the seat container's id — the tie that ends it with the seat. A drawer
+# without the file a companion requires gets one line, not a container.
+#
+# usage: wolf-sidecars <sidecars.json>    (a daemon: reconciles, then follows the engine's events)
+#   {"seats": "/srv/seats",
+#    "sidecars": [{"name": "spotify", "image": "ghcr.io/example/juke:0.1.0",
+#                  "home": ".juke/spotify", "data_root": "/var/lib/juke",
+#                  "requires": "credentials.json", "memory": "256m",
+#                  "env": {"JUKE_NAME": "Le Juke – {app}"}}]}
+# {app} and {drawer} in an env value are the seat's. Images are pulled by the
+# converge, never here (--pull never): a tap never waits on a pull.
+set -u
+cfg="${1:?usage: wolf-sidecars <sidecars.json>}"
+tag=wolf-sidecars
+log() { echo "$tag: $*"; }
+seats=$(jq -r .seats "$cfg")
+LABEL=wolf.sidecar.seat            # a companion carries its seat's container id here
+mapfile -t sidecars < <(jq -c '.sidecars[]' "$cfg")
+[ "${#sidecars[@]}" -gt 0 ] || { log "no sidecar declared — nothing to do"; exec sleep infinity; }
+
+# One inspect, one line: id, hostname, uid, gid, session, pulse server, pulse
+# sink, drawer, app — or nothing at all when the container is not a seat.
+read_seat() { # <container id or name>
+  podman inspect --type container "$1" 2>/dev/null | jq -r --arg seats "$seats/" '
+    .[0] as $c
+    | ($c.Mounts // [] | map(select(.Destination == "/home/retro")) | .[0].Source // "") as $src
+    | select($src != "" and ($src | startswith($seats)))
+    | ($src | ltrimstr($seats) | split("/")) as $p
+    | select(($p | length) >= 2)
+    | ($c.Config.Env // [] | map(split("=") | {key: .[0], value: (.[1:] | join("="))}) | from_entries) as $e
+    | [$c.Id, $c.Config.Hostname, ($e.PUID // ""), ($e.PGID // ""), ($e.WOLF_SESSION_ID // ""),
+       ($e.PULSE_SERVER // ""), ($e.PULSE_SINK // ""), $p[0], $p[1]] | @tsv'
+}
+
+is_companion() { # <container id or name>: one of ours?
+  [ -n "$(podman inspect --type container --format '{{ index .Config.Labels "'"$LABEL"'" }}' "$1" 2>/dev/null)" ]
+}
+
+ensure() { # <seat container id or name>: every declared companion beside it
+  local line; line=$(read_seat "$1"); [ -n "$line" ] || return 0
+  local id host uid gid session server sink drawer app
+  IFS=$'\t' read -r id host uid gid session server sink drawer app <<<"$line"
+  [ -n "$session" ] && [ -n "$server" ] && [ -n "$uid" ] || { log "$drawer/$app ($1): a seat without session/audio/uid in its env — not a seat this watcher knows; skipped"; return 0; }
+  local socket="${server#unix:}"
+  [ -S "$socket" ] || { log "$drawer/$app: the seat's audio socket $socket is not here — no companion"; return 0; }
+  local s name image home root requires memory cname dir
+  for s in "${sidecars[@]}"; do
+    name=$(jq -r .name <<<"$s"); image=$(jq -r .image <<<"$s"); home=$(jq -r .home <<<"$s")
+    root=$(jq -r '.data_root // "/data"' <<<"$s"); requires=$(jq -r '.requires // ""' <<<"$s")
+    memory=$(jq -r '.memory // "256m"' <<<"$s")
+    cname="${name}_${session}"
+    podman container exists "$cname" 2>/dev/null && continue
+    dir="$seats/$drawer/$home"
+    if [ -n "$requires" ] && [ ! -f "$dir/$requires" ]; then
+      log "$drawer/$app: not linked to $name (no $dir/$requires) — no companion"
+      continue
+    fi
+    [ -d "$dir" ] || { log "$drawer/$app: $dir is missing — no companion"; continue; }
+    local -a envs=()
+    while IFS=$'\t' read -r k v; do
+      [ -n "$k" ] || continue
+      v=${v//\{app\}/$app}; v=${v//\{drawer\}/$drawer}
+      envs+=(-e "$k=$v")
+    done < <(jq -r '(.env // {}) | to_entries[] | [.key, .value] | @tsv' <<<"$s")
+    if podman run -d --rm --name "$cname" --hostname "$host" --label "$LABEL=$id" \
+         --user "$uid:$gid" --cap-drop all --security-opt no-new-privileges \
+         --memory "$memory" --pull never --log-driver journald --log-opt "tag=$cname" \
+         -e HOME="$root" -e PULSE_SERVER="$server" -e PULSE_SINK="$sink" "${envs[@]}" \
+         -v "$socket:$socket:ro" -v "$dir:$root" "$image" >/dev/null 2>"/run/$tag.err"; then
+      log "$drawer/$app: $cname started beside the seat (hostname $host, sink ${sink:-default}, as $uid)"
+    else
+      log "$drawer/$app: $cname FAILED to start — $(tr '\n' ' ' <"/run/$tag.err")"
+    fi
+  done
+}
+
+retire() { # <seat container id>: every companion tied to it
+  local c cname
+  for c in $(podman ps -a -q --filter "label=$LABEL=$1" 2>/dev/null); do
+    cname=$(podman inspect --format '{{.Name}}' "$c" 2>/dev/null || echo "$c")
+    if podman rm -f "$c" >/dev/null 2>&1; then
+      log "companion $cname retired with its seat"
+    else
+      log "companion $cname: rm failed (already gone?)"
+    fi
+  done
+}
+
+reconcile() {
+  local c seat
+  # companions whose seat is gone
+  for c in $(podman ps -a -q --filter "label=$LABEL" 2>/dev/null); do
+    seat=$(podman inspect --format '{{ index .Config.Labels "'"$LABEL"'" }}' "$c" 2>/dev/null)
+    if [ -z "$seat" ] || ! podman inspect --type container --format '{{.State.Running}}' "$seat" 2>/dev/null | grep -q true; then
+      podman rm -f "$c" >/dev/null 2>&1 && log "orphan companion $c removed (its seat is gone)"
+    fi
+  done
+  # seats without their companions
+  for c in $(podman ps -q 2>/dev/null); do
+    is_companion "$c" && continue
+    ensure "$c"
+  done
+}
+
+log "watching — ${#sidecars[@]} sidecar(s) declared: $(jq -r '[.sidecars[].name] | join(", ")' "$cfg")"
+reconcile
+# the engine's own feed, the one Wolf itself reads for its router: a seat's
+# start brings its companions, a seat's end takes them away
+podman events --format json --filter type=container --filter event=start --filter event=died --filter event=remove 2>/dev/null \
+| while IFS= read -r ev; do
+    status=$(jq -r '.Status // ""' <<<"$ev"); id=$(jq -r '.ID // ""' <<<"$ev"); name=$(jq -r '.Name // ""' <<<"$ev")
+    [ -n "$id" ] || continue
+    case "$status" in
+      start)
+        is_companion "$id" && continue
+        ensure "$id"
+        ;;
+      died|remove)
+        # a companion that died on its own is already gone (--rm); its line
+        # is in the journal under its own tag. A seat's end retires its companions
+        if [ "$status" = died ] && [[ "$name" =~ ^([A-Za-z0-9-]+)_[0-9]+$ ]] && jq -e --arg n "${BASH_REMATCH[1]}" '.sidecars[] | select(.name==$n)' "$cfg" >/dev/null; then
+          log "companion $name ended on its own — no restart until the next seat"
+          continue
+        fi
+        retire "$id"
+        ;;
+    esac
+  done
+log "the events feed ended — exiting (the unit restarts this)"
+exit 1

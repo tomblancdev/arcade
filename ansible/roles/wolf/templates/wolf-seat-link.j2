@@ -1,0 +1,51 @@
+#!/bin/sh
+# wolf-seat-link — link a drawer to a companion's account, once.
+# Rendered by ansible (tomblancdev.arcade.wolf): the paths are the role's.
+#
+# A companion (wolf-sidecars) starts beside every seat of a drawer that holds
+# the file it requires — Le Juke's Spotify receiver needs the account's
+# stored credentials. This makes that file: it runs the companion's image in
+# its `link` mode, as the drawer's own uid, on the drawer's own folder
+# (<seats>/<drawer>/<home> — outside every app home, so one link serves every
+# tile and no golden template ever carries it). Interactive: the image prints
+# a URL, the person signs in in any browser, and pastes back the address the
+# browser lands on. From then on, every seat the drawer opens carries the
+# companion; the link is undone by removing the file.
+#
+# usage: wolf-seat-link <drawer> <sidecar name>
+#   e.g. wolf-seat-link someone spotify
+set -eu
+cfg={{ arcade_wolf_sidecars_file | quote }}
+seats={{ arcade_wolf_seats | quote }}
+tag=wolf-seat-link
+die() { echo "$tag: REFUSED — $*" >&2; exit 1; }
+[ $# -eq 2 ] || { echo "usage: $tag <drawer> <sidecar name>" >&2; exit 2; }
+id=$1; name=$2
+[ -d "$seats/$id" ] || die "$seats/$id: no such drawer"
+entry=$(jq -c --arg n "$name" '.sidecars[] | select(.name == $n)' "$cfg")
+[ -n "$entry" ] || die "no sidecar named '$name' in $cfg (declared: $(jq -r '[.sidecars[].name] | join(", ")' "$cfg"))"
+image=$(printf '%s' "$entry" | jq -r .image)
+home=$(printf '%s' "$entry" | jq -r .home)
+root=$(printf '%s' "$entry" | jq -r '.data_root // "/data"')
+requires=$(printf '%s' "$entry" | jq -r '.requires // ""')
+uid=$(stat -c %u "$seats/$id"); gid=$(stat -c %g "$seats/$id")
+podman image exists "$image" || die "$image is not on this host (a converge pulls the companions' images)"
+
+# the drawer's folder, every missing directory on the way made for the
+# drawer's uid — never root's, or the companion could not write its own data
+dir="$seats/$id/$home"
+d="$dir"; missing=""
+while [ ! -d "$d" ]; do missing="$d $missing"; d=$(dirname "$d"); done
+for m in $missing; do mkdir "$m" && chown "$uid:$gid" "$m" && chmod 700 "$m"; done
+[ -n "$requires" ] && [ -f "$dir/$requires" ] && die "$id is already linked to $name ($dir/$requires exists — remove it to link again)"
+
+echo "$tag: linking drawer '$id' to '$name' — as uid $uid, on $dir"
+podman run --rm -it --user "$uid:$gid" --pull never --cap-drop all --security-opt no-new-privileges \
+  --log-driver none -e HOME="$root" -v "$dir:$root" "$image" link || true
+if [ -z "$requires" ] || [ -f "$dir/$requires" ]; then
+  logger -t "$tag" "linked $id to $name"
+  echo "$tag: '$id' is linked to '$name' — the companion starts beside the next seat this drawer opens"
+else
+  logger -t "$tag" "link of $id to $name did not complete"
+  die "not linked — $dir/$requires was not created (see the image's own lines above)"
+fi

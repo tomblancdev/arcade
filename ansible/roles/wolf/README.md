@@ -100,4 +100,23 @@ Three things worth knowing before you change anything:
   prefix it finds. The path must be the app's *real* one: the directories
   on the way are made for the seat's uid.
 
+* **A companion beside every seat, for what its image does not carry**
+  (`arcade_wolf_sidecars`; v0.14.0). The engine routes a seat's sound to the
+  session's sink by the *hostname* a stream reports, and hands every seat
+  its audio socket and its sink — so a second container wearing the three
+  is mixed into the seat, whatever image the seat runs and without that
+  image knowing. `wolf-sidecars` follows the engine's own event feed (the
+  one its router reads): a seat starts, its companions start beside it —
+  the drawer, the app and the uid read from the seat's own mount and env,
+  never guessed —; the seat dies, they go. A companion runs as the drawer's
+  uid with every capability dropped, no device, a memory ceiling, only the
+  audio socket lent (never the runtime dir: the engine's API socket lives
+  there and authenticates nobody). Its data is the *drawer's*, outside every
+  app home (`<seats>/<drawer>/<home>`): one link serves every tile, no golden
+  template ever carries it, and it is copied off the box with the person's
+  state. `wolf-seat-link <drawer> <name>` is the once-per-person step that
+  creates the file a companion requires; a drawer without it gets one log
+  line and no container. The first companion: Le Juke, a Spotify Connect
+  receiver — music under whatever the person plays, driven from their phone.
+
 Contract: [`defaults/main.yml`](defaults/main.yml).
