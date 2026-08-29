@@ -290,11 +290,22 @@ arcade_wolf_golden_parts: []
 # play, driven from their phone (github.com/tomblancdev/juke).
 arcade_wolf_sidecars: []
 #  - name: spotify                            # the companion: <name>_<session id>
-#    image: ghcr.io/tomblancdev/juke:0.1.0    # pulled by the converge, never at a seat's start; a bump IS the update
+#    image: ghcr.io/tomblancdev/juke:0.1.1    # pulled by the converge, never at a seat's start; a bump IS the update
 #    home: .juke/spotify                      # <dir>/<folder> under the drawer — two levels: the state copy needs both
 #    data_root: /var/lib/juke                 # where that folder is mounted inside the companion
 #    requires: credentials.json               # no file in the folder, no companion (one line instead)
+#    token_env: JUKE_TOKEN                    # the link mode's token, when a panel hands one (below)
 #    env: { JUKE_NAME: "Le Juke – {app}" }    # {app} / {drawer} are the seat's
 #    memory: 256m
 #    state: true
 arcade_wolf_sidecars_file: /etc/wolf/sidecars.json
+# The link, from a panel: the file a companion requires is a person's, and
+# the natural way to make it is a tap on their own phone. Name the panel's
+# endpoint and the watcher reports, every `every` seconds, which drawers hold
+# each companion's file, and receives what the panel has pending — a drawer
+# and a short-lived token the person just obtained there (the companion's
+# image runs its `link` mode with it, as the drawer's uid), or a drawer to
+# unlink. Reached through the row the hub tile already has; the token never
+# touches a disk here. "" = no panel: `wolf-seat-link` by hand only.
+arcade_wolf_sidecars_link: { url: "", every: 10 }
+#  { url: "http://192.0.2.20:8080/api/projects/appliance/links/sync", every: 10 }

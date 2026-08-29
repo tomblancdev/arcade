@@ -28,12 +28,25 @@
 # the seat container's id — the tie that ends it with the seat. A drawer
 # without the file a companion requires gets one line, not a container.
 #
+# THE LINK, FROM A PANEL. The file a companion requires is a person's
+# (Spotify's stored credentials); the natural way to make it is a tap on the
+# person's own phone, not a terminal. So, when the register names a panel
+# (`link.url`), this watcher also reports, every `link.every` seconds, which
+# drawers hold each companion's file — and receives what the panel has
+# pending: a drawer and a short-lived token the person just obtained there,
+# or a drawer to unlink. A pending link runs the companion's image in its
+# `link` mode with the token in `token_env`, as the drawer's uid, on the
+# drawer's own folder; an unlink removes the file and ends that drawer's
+# running companions. The panel is reached through the row the hub tile
+# already has; the token never touches a disk here.
+#
 # usage: wolf-sidecars <sidecars.json>    (a daemon: reconciles, then follows the engine's events)
 #   {"seats": "/srv/seats",
+#    "link": {"url": "http://192.0.2.20:8080/api/projects/appliance/links/sync", "every": 10},
 #    "sidecars": [{"name": "spotify", "image": "ghcr.io/example/juke:0.1.0",
 #                  "home": ".juke/spotify", "data_root": "/var/lib/juke",
-#                  "requires": "credentials.json", "memory": "256m",
-#                  "env": {"JUKE_NAME": "Le Juke – {app}"}}]}
+#                  "requires": "credentials.json", "token_env": "JUKE_TOKEN",
+#                  "memory": "256m", "env": {"JUKE_NAME": "Le Juke – {app}"}}]}
 # {app} and {drawer} in an env value are the seat's. Images are pulled by the
 # converge, never here (--pull never): a tap never waits on a pull.
 set -u
@@ -41,7 +54,9 @@ cfg="${1:?usage: wolf-sidecars <sidecars.json>}"
 tag=wolf-sidecars
 log() { echo "$tag: $*"; }
 seats=$(jq -r .seats "$cfg")
+link_url=$(jq -r '.link.url // ""' "$cfg"); link_every=$(jq -r '.link.every // 10' "$cfg")
 LABEL=wolf.sidecar.seat            # a companion carries its seat's container id here
+LABEL_LINK=wolf.sidecar.link       # ...and "<sidecar>:<drawer>", the link it runs on
 mapfile -t sidecars < <(jq -c '.sidecars[]' "$cfg")
 [ "${#sidecars[@]}" -gt 0 ] || { log "no sidecar declared — nothing to do"; exec sleep infinity; }
 
@@ -89,7 +104,7 @@ ensure() { # <seat container id or name>: every declared companion beside it
       v=${v//\{app\}/$app}; v=${v//\{drawer\}/$drawer}
       envs+=(-e "$k=$v")
     done < <(jq -r '(.env // {}) | to_entries[] | [.key, .value] | @tsv' <<<"$s")
-    if podman run -d --rm --name "$cname" --hostname "$host" --label "$LABEL=$id" \
+    if podman run -d --rm --name "$cname" --hostname "$host" --label "$LABEL=$id" --label "$LABEL_LINK=$name:$drawer" \
          --user "$uid:$gid" --cap-drop all --security-opt no-new-privileges \
          --memory "$memory" --pull never --log-driver journald --log-opt "tag=$cname" \
          -e HOME="$root" -e PULSE_SERVER="$server" -e PULSE_SINK="$sink" "${envs[@]}" \
@@ -129,8 +144,79 @@ reconcile() {
   done
 }
 
+# --- the link, from a panel --------------------------------------------------
+sidecar_named() { jq -c --arg n "$1" '.sidecars[] | select(.name == $n)' "$cfg"; }
+
+linked_report() { # {"<sidecar>": ["<drawer>", ...]} — who holds each companion's file
+  local s name home requires d arr out='{}'
+  for s in "${sidecars[@]}"; do
+    name=$(jq -r .name <<<"$s"); home=$(jq -r .home <<<"$s"); requires=$(jq -r '.requires // ""' <<<"$s")
+    [ -n "$requires" ] || continue
+    arr='[]'
+    for d in "$seats"/*/; do
+      d=${d%/}; d=${d##*/}
+      [ -f "$seats/$d/$home/$requires" ] && arr=$(jq -c --arg d "$d" '. + [$d]' <<<"$arr")
+    done
+    out=$(jq -c --arg n "$name" --argjson a "$arr" '. + {($n): $a}' <<<"$out")
+  done
+  echo "$out"
+}
+
+drawer_dir() { # <drawer> <home>: the drawer's folder, every missing directory made for the drawer's uid
+  local d="$seats/$1/$2" uid gid m missing=""
+  uid=$(stat -c %u "$seats/$1") && gid=$(stat -c %g "$seats/$1") || return 1
+  m="$d"; while [ ! -d "$m" ]; do missing="$m $missing"; m=$(dirname "$m"); done
+  for m in $missing; do mkdir "$m" && chown "$uid:$gid" "$m" && chmod 700 "$m" || return 1; done
+  echo "$d $uid $gid"
+}
+
+link_one() { # <sidecar> <drawer> <token>: the companion's image in its link mode, the token in its env
+  local s name image home root requires tenv dir uid gid
+  s=$(sidecar_named "$1"); [ -n "$s" ] || { log "link: no sidecar named $1 — ignored"; return 0; }
+  [ -d "$seats/$2" ] || { log "link: $2 is not a drawer here — ignored"; return 0; }
+  name=$1; image=$(jq -r .image <<<"$s"); home=$(jq -r .home <<<"$s"); root=$(jq -r '.data_root // "/data"' <<<"$s")
+  requires=$(jq -r '.requires // ""' <<<"$s"); tenv=$(jq -r '.token_env // "TOKEN"' <<<"$s")
+  read -r dir uid gid < <(drawer_dir "$2" "$home") || { log "link: $2/$home cannot be made — not linked"; return 0; }
+  if [ -n "$requires" ] && [ -f "$dir/$requires" ]; then log "link: $2 already holds $name's $requires — nothing to do"; return 0; fi
+  log "link: $2 → $name (a token from the panel; as $uid)"
+  podman run --rm --name "link_${name}_$2" --user "$uid:$gid" --pull never --cap-drop all --security-opt no-new-privileges \
+    --log-driver journald --log-opt "tag=link_${name}_$2" -e HOME="$root" -e "$tenv=$3" -v "$dir:$root" "$image" link >/dev/null 2>&1
+  if [ -z "$requires" ] || [ -f "$dir/$requires" ]; then
+    log "link: $2 is linked to $name — the companion starts beside their next seat"
+  else
+    log "link: $2 → $name FAILED — the image's own lines are under tag link_${name}_$2"
+  fi
+}
+
+unlink_one() { # <sidecar> <drawer>: the file gone, the drawer's running companions ended
+  local s home requires c
+  s=$(sidecar_named "$1"); [ -n "$s" ] || return 0
+  home=$(jq -r .home <<<"$s"); requires=$(jq -r '.requires // ""' <<<"$s")
+  [ -n "$requires" ] && rm -f "$seats/$2/$home/$requires"
+  for c in $(podman ps -a -q --filter "label=$LABEL_LINK=$1:$2" 2>/dev/null); do podman rm -f "$c" >/dev/null 2>&1; done
+  log "unlink: $2 is no longer linked to $1"
+}
+
+link_loop() { # every <every> s: report who is linked, receive what is pending
+  local report resp sname drawer token
+  while sleep "$link_every"; do
+    report=$(linked_report)
+    resp=$(curl -fsS -m 5 -H 'Content-Type: application/json' -X POST --data "{\"linked\": $report}" "$link_url" 2>/dev/null) || continue
+    while IFS=$'\t' read -r sname drawer token; do
+      [ -n "$sname" ] && [ -n "$token" ] && link_one "$sname" "$drawer" "$token"
+    done < <(jq -r '(.pending // [])[] | [.sidecar, .drawer, .token] | @tsv' <<<"$resp")
+    while IFS=$'\t' read -r sname drawer; do
+      [ -n "$sname" ] && unlink_one "$sname" "$drawer"
+    done < <(jq -r '(.unlink // [])[] | [.sidecar, .drawer] | @tsv' <<<"$resp")
+  done
+}
+
 log "watching — ${#sidecars[@]} sidecar(s) declared: $(jq -r '[.sidecars[].name] | join(", ")' "$cfg")"
 reconcile
+if [ -n "$link_url" ]; then
+  log "the link: reporting to the panel every ${link_every}s ($link_url)"
+  link_loop &
+fi
 # the engine's own feed, the one Wolf itself reads for its router: a seat's
 # start brings its companions, a seat's end takes them away
 podman events --format json --filter type=container --filter event=start --filter event=died --filter event=remove 2>/dev/null \

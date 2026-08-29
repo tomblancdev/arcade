@@ -114,9 +114,15 @@ Three things worth knowing before you change anything:
   there and authenticates nobody). Its data is the *drawer's*, outside every
   app home (`<seats>/<drawer>/<home>`): one link serves every tile, no golden
   template ever carries it, and it is copied off the box with the person's
-  state. `wolf-seat-link <drawer> <name>` is the once-per-person step that
-  creates the file a companion requires; a drawer without it gets one log
-  line and no container. The first companion: Le Juke, a Spotify Connect
-  receiver — music under whatever the person plays, driven from their phone.
+  state. The file a companion requires is made **from a panel**
+  (`arcade_wolf_sidecars_link`): the watcher reports every few seconds which
+  drawers hold it and receives what the panel has pending — a drawer and a
+  short-lived token the person just obtained on their own phone (the
+  companion's image runs its `link` mode with it, as the drawer's uid), or a
+  drawer to unlink; through the row the hub tile already has, the token
+  never on a disk here. `wolf-seat-link <drawer> <name>` is the same step by
+  hand, an admin's. A drawer without the file gets one log line and no
+  container. The first companion: Le Juke, a Spotify Connect receiver —
+  music under whatever the person plays, driven from their phone.
 
 Contract: [`defaults/main.yml`](defaults/main.yml).
