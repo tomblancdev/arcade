@@ -131,8 +131,11 @@ def audio_params_of(app):
         return str(a["audio_params"]).strip()
     pipe = app.get("opus_gst_pipeline")
     if isinstance(pipe, str):
+        # source ! params ! encoder ! sink — and the sink segment itself
+        # holds a " !\n" (queue ! rtpmoonlightpay … !\nappsink), so at least
+        # four parts, never exactly four (found at the first landing)
         parts = pipe.split(" !\n")
-        if len(parts) == 4:
+        if len(parts) >= 4:
             return parts[1].strip()
     return None
 
