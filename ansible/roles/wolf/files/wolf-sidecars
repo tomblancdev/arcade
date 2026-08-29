@@ -108,7 +108,7 @@ ensure() { # <seat container id or name>: every declared companion beside it
          --user "$uid:$gid" --cap-drop all --security-opt no-new-privileges \
          --memory "$memory" --pull never --log-driver journald --log-opt "tag=$cname" \
          -e HOME="$root" -e PULSE_SERVER="$server" -e PULSE_SINK="$sink" "${envs[@]}" \
-         -v "$socket:$socket:ro" -v "$dir:$root" "$image" >/dev/null 2>"/run/$tag.err"; then
+         -v "$socket:$socket:ro" -v "$dir:$root" "$image" </dev/null >/dev/null 2>"/run/$tag.err"; then
       log "$drawer/$app: $cname started beside the seat (hostname $host, sink ${sink:-default}, as $uid)"
     else
       log "$drawer/$app: $cname FAILED to start — $(tr '\n' ' ' <"/run/$tag.err")"
@@ -175,12 +175,16 @@ link_one() { # <sidecar> <drawer> <token>: the companion's image in its link mod
   s=$(sidecar_named "$1"); [ -n "$s" ] || { log "link: no sidecar named $1 — ignored"; return 0; }
   [ -d "$seats/$2" ] || { log "link: $2 is not a drawer here — ignored"; return 0; }
   name=$1; image=$(jq -r .image <<<"$s"); home=$(jq -r .home <<<"$s"); root=$(jq -r '.data_root // "/data"' <<<"$s")
-  requires=$(jq -r '.requires // ""' <<<"$s"); tenv=$(jq -r '.token_env // "TOKEN"' <<<"$s")
+  requires=$(jq -r '.requires // ""' <<<"$s"); tenv=$(jq -r '.token_env // ""' <<<"$s")
+  # no token_env = the image would run its interactive link with no terminal
+  # and end at once (the first tap, 2026-08-29): say so instead of trying
+  [ -n "$tenv" ] || { log "link: $name declares no token_env — a token from the panel has nowhere to go; not linked"; return 0; }
   read -r dir uid gid < <(drawer_dir "$2" "$home") || { log "link: $2/$home cannot be made — not linked"; return 0; }
   if [ -n "$requires" ] && [ -f "$dir/$requires" ]; then log "link: $2 already holds $name's $requires — nothing to do"; return 0; fi
-  log "link: $2 → $name (a token from the panel; as $uid)"
+  log "link: $2 → $name (a token from the panel, in $tenv; as $uid)"
+  # stdin from nowhere: this runs inside a read loop, and the loop's input is not the container's
   podman run --rm --name "link_${name}_$2" --user "$uid:$gid" --pull never --cap-drop all --security-opt no-new-privileges \
-    --log-driver journald --log-opt "tag=link_${name}_$2" -e HOME="$root" -e "$tenv=$3" -v "$dir:$root" "$image" link >/dev/null 2>&1
+    --log-driver journald --log-opt "tag=link_${name}_$2" -e HOME="$root" -e "$tenv=$3" -v "$dir:$root" "$image" link </dev/null >/dev/null 2>&1
   if [ -z "$requires" ] || [ -f "$dir/$requires" ]; then
     log "link: $2 is linked to $name — the companion starts beside their next seat"
   else
