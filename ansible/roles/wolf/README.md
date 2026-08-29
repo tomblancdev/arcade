@@ -52,6 +52,16 @@ Three things worth knowing before you change anything:
   a pull, and a rebuilt host carries its tiles before anyone tries one. Present,
   never pruned: an image the catalogue does not name may be a person's own.
 
+* **A line may override the engine's audio pipeline for its seats**
+  (`audio: {audio_params: …}`, the engine's own per-app
+  `BaseAppAudioOverride`; v0.13.0). The engine fixes the channel count at
+  the producer and lets every session's encoder take what it is given —
+  right for a tile, wrong for a lobby a 5.1 TV opened and a stereo phone
+  joined (a permanent buzz). A hub tile declares `… ! audioconvert !
+  audio/x-raw, channels={channels}` so each session converts to its own
+  count. Compared only when declared: the API prints the composed pipeline,
+  whose second segment is the params.
+
 * **What the host lends a seat.** Read-only files under `/etc/wolf/seat/`
   that a catalogue line may mount into its seats, kept outside the people's
   homes. Today: `seat-sway-fullscreen` (+ its `.conf` for

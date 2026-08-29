@@ -37,7 +37,19 @@ TWO MODES, ONE COMPARISON.
       is visible in Loki and not only in a play's output.
 
 catalogue.json = {"apps": [<App>...], "absent": ["<title>"...]}, <App> being
-the engine's app shape without the pipeline fields and without an id.
+the engine's app shape without the pipeline fields and without an id — plus,
+optionally, `audio: {audio_params: "..."}`, the engine's own per-app override
+of the audio pipeline's middle segment (BaseAppAudioOverride). Compared only
+when the catalogue declares one: the API does not print the override, only
+the composed `opus_gst_pipeline`, whose second segment IS the params.
+
+WHY AN APP WOULD OVERRIDE IT. The engine fixes the channel count at the
+PRODUCER (the sink's) and lets each session's encoder take whatever the
+producer gives — right for a tile (one consumer, its own sink), wrong for a
+room: a 5.1 TV opens a lobby, a stereo phone joins it, and the phone's
+encoder is handed six channels (a permanent buzz, 2026-08-29). A hub tile
+therefore declares `... ! audioconvert ! audio/x-raw, channels={channels}`:
+every session started on it converts to its OWN count, whatever it listens to.
 """
 import http.client
 import json
@@ -105,7 +117,24 @@ def shape(app, want):
     # the render node is the engine's default unless the catalogue names one
     if want.get("render_node"):
         s["render_node"] = app.get("render_node")
+    # the audio override: the engine's default unless the catalogue names one
+    if (want.get("audio") or {}).get("audio_params"):
+        s["audio_params"] = audio_params_of(app)
     return s
+
+
+def audio_params_of(app):
+    """The app's audio_params: declared (the file, the catalogue), or read out
+    of the composed pipeline the API prints (source ! params ! encoder ! sink)."""
+    a = app.get("audio")
+    if isinstance(a, dict) and a.get("audio_params"):
+        return str(a["audio_params"]).strip()
+    pipe = app.get("opus_gst_pipeline")
+    if isinstance(pipe, str):
+        parts = pipe.split(" !\n")
+        if len(parts) == 4:
+            return parts[1].strip()
+    return None
 
 
 def same(have, want):
@@ -123,6 +152,10 @@ def to_table(want, tomlkit):
         t["render_node"] = str(want["render_node"])
     t["start_virtual_compositor"] = bool(want.get("start_virtual_compositor", True))
     t["start_audio_server"] = bool(want.get("start_audio_server", True))
+    if (want.get("audio") or {}).get("audio_params"):
+        a = tomlkit.table()
+        a["audio_params"] = str(want["audio"]["audio_params"])
+        t["audio"] = a
     r, wr = tomlkit.table(), want["runner"]
     r["type"] = str(wr["type"])
     for k in ("name", "image"):
