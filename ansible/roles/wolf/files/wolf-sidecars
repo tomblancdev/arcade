@@ -182,9 +182,18 @@ link_one() { # <sidecar> <drawer> <token>: the companion's image in its link mod
   read -r dir uid gid < <(drawer_dir "$2" "$home") || { log "link: $2/$home cannot be made — not linked"; return 0; }
   if [ -n "$requires" ] && [ -f "$dir/$requires" ]; then log "link: $2 already holds $name's $requires — nothing to do"; return 0; fi
   log "link: $2 → $name (a token from the panel, in $tenv; as $uid)"
+  # the companion's own env travels with the link too (a client id the image
+  # must wear at the link AND at every receive); {app} reads "link" here
+  local -a envs=()
+  local k v
+  while IFS=$'\t' read -r k v; do
+    [ -n "$k" ] || continue
+    v=${v//\{app\}/link}; v=${v//\{drawer\}/$2}
+    envs+=(-e "$k=$v")
+  done < <(jq -r '(.env // {}) | to_entries[] | [.key, .value] | @tsv' <<<"$s")
   # stdin from nowhere: this runs inside a read loop, and the loop's input is not the container's
   podman run --rm --name "link_${name}_$2" --user "$uid:$gid" --pull never --cap-drop all --security-opt no-new-privileges \
-    --log-driver journald --log-opt "tag=link_${name}_$2" -e HOME="$root" -e "$tenv=$3" -v "$dir:$root" "$image" link </dev/null >/dev/null 2>&1
+    --log-driver journald --log-opt "tag=link_${name}_$2" -e HOME="$root" -e "$tenv=$3" "${envs[@]}" -v "$dir:$root" "$image" link </dev/null >/dev/null 2>&1
   if [ -z "$requires" ] || [ -f "$dir/$requires" ]; then
     log "link: $2 is linked to $name — the companion starts beside their next seat"
   else
