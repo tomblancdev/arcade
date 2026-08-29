@@ -37,7 +37,7 @@
 # the seat — and with its link, so an unlink can end it too.
 #
 # usage: wolf-sidecars <sidecars.json>    (a daemon: reconciles, then follows the engine's events)
-#   {"seats": "/srv/seats",
+#   {"seats": "/srv/seats", "state": "/srv/wolf",
 #    "link": {"url": "http://192.0.2.20:8080/api/projects/appliance/links/sync", "every": 10},
 #    "sidecars": [{"name": "spotify", "image": "ghcr.io/example/juke:1.0.0",
 #                  "token_url": "http://192.0.2.20:8080/api/projects/appliance/links/spotify/token?drawer={drawer}",
@@ -48,7 +48,7 @@ set -u
 cfg="${1:?usage: wolf-sidecars <sidecars.json>}"
 tag=wolf-sidecars
 log() { echo "$tag: $*"; }
-seats=$(jq -r .seats "$cfg")
+seats=$(jq -r .seats "$cfg"); state=$(jq -r '.state // ""' "$cfg")
 link_url=$(jq -r '.link.url // ""' "$cfg"); link_every=$(jq -r '.link.every // 10' "$cfg")
 LABEL=wolf.sidecar.seat            # a companion carries its seat's container id here
 LABEL_LINK=wolf.sidecar.link       # ...and "<sidecar>:<drawer>", the link it runs on
@@ -64,15 +64,20 @@ is_linked() { # <sidecar> <drawer>: what the panel last said
 # One inspect, one line: id, hostname, uid, gid, session, pulse server, pulse
 # sink, drawer, app — or nothing at all when the container is not a seat.
 read_seat() { # <container id or name>
-  podman inspect --type container "$1" 2>/dev/null | jq -r --arg seats "$seats/" '
+  # the home's source is <root>/<drawer>/<app>, where <root> is the seat
+  # store OR the engine's own root (the engine names its root; the store is
+  # reached through a symlink under it — read live: /srv/wolf/salon/RetroDECK)
+  podman inspect --type container "$1" 2>/dev/null | jq -r --arg seats "$seats" --arg state "$state" '
     .[0] as $c
     | ($c.Mounts // [] | map(select(.Destination == "/home/retro")) | .[0].Source // "") as $src
-    | select($src != "" and ($src | startswith($seats)))
-    | ($src | ltrimstr($seats) | split("/")) as $p
-    | select(($p | length) >= 2)
+    | select($src != "")
+    | ($src | split("/")) as $p
+    | select(($p | length) >= 3)
+    | ($p[:-2] | join("/")) as $root
+    | select($root == $seats or ($state != "" and $root == $state))
     | ($c.Config.Env // [] | map(split("=") | {key: .[0], value: (.[1:] | join("="))}) | from_entries) as $e
     | [$c.Id, $c.Config.Hostname, ($e.PUID // ""), ($e.PGID // ""), ($e.WOLF_SESSION_ID // ""),
-       ($e.PULSE_SERVER // ""), ($e.PULSE_SINK // ""), $p[0], $p[1]] | @tsv'
+       ($e.PULSE_SERVER // ""), ($e.PULSE_SINK // ""), $p[-2], $p[-1]] | @tsv'
 }
 
 is_companion() { # <container id or name>: one of ours?

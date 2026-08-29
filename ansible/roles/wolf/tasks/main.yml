@@ -589,7 +589,7 @@
 - name: "The companions' register (which, from which image, on which folder of the drawer - data; nothing here is a secret)"
   ansible.builtin.copy:
     dest: "{{ arcade_wolf_sidecars_file }}"
-    content: "{{ {'seats': arcade_wolf_seats, 'link': arcade_wolf_sidecars_link, 'sidecars': arcade_wolf_sidecars} | to_nice_json }}\n"
+    content: "{{ {'seats': arcade_wolf_seats, 'state': arcade_wolf_state, 'link': arcade_wolf_sidecars_link, 'sidecars': arcade_wolf_sidecars} | to_nice_json }}\n"
     mode: "0644"
   register: arcade_wolf_sidecars_register
 
