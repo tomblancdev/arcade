@@ -27,5 +27,9 @@
 set -u
 MARK=${ARCADE_SESSION_MARK:-/run/arcade/session}
 [ -e "$MARK" ] && exit 0
-[ -n "$(who 2>/dev/null | awk '$2 ~ /^pts/')" ] && exit 0
+# the pts is read in column 2 OR 3: `who` on a logind system (Debian trixie,
+# coreutils 9.7) prints an ssh tty as `tom sshd pts/0 ...` — `$2` alone never
+# matched one there (found in the lab 2026-09-25, on the nodes' copy of this
+# rule). Not re-read on this box's own OS since the role went dormant.
+[ -n "$(who 2>/dev/null | awk '$2 ~ /^pts\// || $3 ~ /^pts\//')" ] && exit 0
 exit 1
